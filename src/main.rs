@@ -1,7 +1,6 @@
-use std::{collections::HashMap, iter::FusedIterator};
-
 use eframe::egui;
-use egui::ImageButton;
+use native_dialog::FileDialog;
+use std::collections::HashMap;
 
 struct FoamGame {
     startup: bool,
@@ -12,16 +11,19 @@ struct FoamGame {
     start_pos: Option<(usize, usize)>, // position of unique start tile
     end_pos: Option<(usize, usize)>,   // position of unique end tile
     player_pos: (usize, usize),
-
-    texture_cache: HashMap<String, egui::TextureHandle>,
+    texture_cache: HashMap<String, egui::TextureHandle>, // Cache for textures to avoid reloading them every frame
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 struct DirectionsAllowed {
     up: bool,
-    down: bool,
-    left: bool,
+    up_right: bool,
     right: bool,
+    down_right: bool,
+    down: bool,
+    down_left: bool,
+    left: bool,
+    up_left: bool,
 }
 
 struct DirectionsAllowedIter {
@@ -34,11 +36,15 @@ impl DirectionsAllowedIter {
         DirectionsAllowedIter {
             inner: DirectionsAllowed {
                 up: false,
+                up_right: false,
                 right: false,
+                down_right: false,
                 down: false,
+                down_left: false,
                 left: false,
+                up_left: false,
             },
-            remaining: 15,
+            remaining: 255, // 2^8 - 1 = 255, all combinations of 8 directions
         }
     }
 }
@@ -51,36 +57,49 @@ impl Iterator for DirectionsAllowedIter {
             return None;
         }
         self.remaining -= 1;
+
         if self.inner.up {
             self.inner.up = false;
-            if self.inner.right {
-                self.inner.right = false;
-                if self.inner.down {
-                    self.inner.down = false;
-                    if self.inner.left {
-                        self.inner.left = false;
-                        unreachable!("Iterated through more than 15 directions");
+            if self.inner.up_right {
+                self.inner.up_right = false;
+                if self.inner.right {
+                    self.inner.right = false;
+                    if self.inner.down_right {
+                        self.inner.down_right = false;
+                        if self.inner.down {
+                            self.inner.down = false;
+                            if self.inner.down_left {
+                                self.inner.down_left = false;
+                                if self.inner.left {
+                                    self.inner.left = false;
+                                    if self.inner.up_left {
+                                        self.inner.up_left = false;
+                                        unreachable!("Iterated through more than 15 directions");
+                                    } else {
+                                        self.inner.up_left = true;
+                                    }
+                                } else {
+                                    self.inner.left = true;
+                                }
+                            } else {
+                                self.inner.down_left = true;
+                            }
+                        } else {
+                            self.inner.down = true;
+                        }
                     } else {
-                        self.inner.left = true;
+                        self.inner.down_right = true;
                     }
                 } else {
-                    self.inner.down = true;
+                    self.inner.right = true;
                 }
             } else {
-                self.inner.right = true;
+                self.inner.up_right = true;
             }
         } else {
             self.inner.up = true;
         }
         Some(self.inner.clone())
-    }
-}
-
-impl FusedIterator for DirectionsAllowedIter {}
-
-impl ExactSizeIterator for DirectionsAllowedIter {
-    fn len(&self) -> usize {
-        self.remaining
     }
 }
 
@@ -102,37 +121,35 @@ impl ExactSizeIterator for DirectionsAllowedIter {
 //     }
 // }
 
-// Tiles:
 // Each tile occupies one space on the board, and has different rules for movement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 enum Tile {
     Empty,
-    MoveCardinal(DirectionsAllowed),
-    // all other combinations of cardinal movement
+    Move(DirectionsAllowed),
+    Cloud(DirectionsAllowed), // Clouds, disappear after one use
     Bounce(isize), // Bounce some amount of squares, +/- some amount of acceleration or deceleration
-    Portal,        // Portals from one tile to another
+    Portal(char),  // Portal, teleport to other portal with same letter
     Water,         // Water
     Ice,           // Ice
     Door,          // Doors, requires
     Wall,          // Blocks movement
     StartSpace,    // Start space, where the player starts
     EndSpace,      // End space, puzzle completion
-    Cloud,         // Clouds, disappear after one use
 }
 
 fn all_tiles() -> impl Iterator<Item = Tile> {
     DirectionsAllowedIter::new()
-        .map(Tile::MoveCardinal)
+        .map(Tile::Move)
+        .chain(DirectionsAllowedIter::new().map(Tile::Cloud))
         .chain(vec![
             Tile::Bounce(1),
             Tile::Bounce(0),
             Tile::Bounce(-1),
-            Tile::Portal,
+            Tile::Portal('A'),
             Tile::Water,
             Tile::Ice,
             Tile::Door,
             Tile::Wall,
-            Tile::Cloud,
             Tile::StartSpace,
             Tile::EndSpace,
             Tile::Empty,
@@ -140,56 +157,35 @@ fn all_tiles() -> impl Iterator<Item = Tile> {
 }
 
 impl Tile {
-    pub fn file_name(&self) -> String {
+    pub fn file_name(&self) -> &str {
         match self {
-            Tile::Empty => "assets/empty.png".to_string(),
-            Tile::MoveCardinal(dirs) => {
-                let mut file_name = "assets/cardinal".to_string();
-                if dirs.up {
-                    file_name.push_str("_up");
-                }
-                if dirs.right {
-                    file_name.push_str("_right");
-                }
-                if dirs.down {
-                    file_name.push_str("_down");
-                }
-                if dirs.left {
-                    file_name.push_str("_left");
-                }
-                file_name.push_str(".png");
-                file_name
-            }
-            Tile::Bounce(distance) => match distance {
-                -1 => "assets/bounce_less.png".to_string(),
-                0 => "assets/bounce_same.png".to_string(),
-                1 => "assets/bounce_more.png".to_string(),
-                _ => panic!("Bounce distance should be -1, 0, or 1: {}", distance),
-            },
-            Tile::Portal => "assets/portal.png".to_string(),
-            Tile::Water => "assets/water.png".to_string(),
-            Tile::Ice => "assets/ice.png".to_string(),
-            Tile::Door => "assets/door.png".to_string(),
-            Tile::Wall => "assets/wall.png".to_string(),
-            Tile::StartSpace => "assets/start_space.png".to_string(),
-            Tile::EndSpace => "assets/end_space.png".to_string(),
-            Tile::Cloud => "assets/cloud.png".to_string(),
+            Tile::Empty => "assets/empty.png",
+            Tile::Move(_) => "assets/move.png",
+            Tile::Cloud(_) => "assets/cloud.png",
+            Tile::Bounce(_) => "assets/bounce.png",
+            Tile::Portal(_) => "assets/portal.png",
+            Tile::Water => "assets/water.png",
+            Tile::Ice => "assets/ice.png",
+            Tile::Door => "assets/door.png",
+            Tile::Wall => "assets/wall.png",
+            Tile::StartSpace => "assets/start_space.png",
+            Tile::EndSpace => "assets/end_space.png",
         }
     }
 
     pub fn explanation(&self) -> &str {
         match self {
             Tile::Empty => "An empty tile, no special properties.",
-            Tile::MoveCardinal(_) => "A tile that allows movement up, down, left, and right.",
+            Tile::Move(_) => "A tile that allows movement in specific directions.",
+            Tile::Cloud(_) => "A cloud tile that disappears after one use.",
             Tile::Bounce(_) => "A tile that bounces the player a certain distance.",
-            Tile::Portal => "A portal tile that teleports the player to another location.",
+            Tile::Portal(_) => "A portal tile that teleports the player to another location.",
             Tile::Water => "A water tile, which may have special movement rules.",
             Tile::Ice => "An ice tile, which may affect movement speed.",
             Tile::Door => "A door tile, which may require a key or other condition to pass.",
             Tile::Wall => "A wall tile, which blocks movement.",
             Tile::StartSpace => "The starting space for the player.",
             Tile::EndSpace => "The end space for the puzzle completion.",
-            Tile::Cloud => "A cloud tile that disappears after one use.",
         }
     }
 }
@@ -203,9 +199,9 @@ impl FoamGame {
     ) -> Result<&egui::TextureHandle, String> {
         let file_name = tile.file_name();
 
-        if !self.texture_cache.contains_key(&file_name) {
+        if !self.texture_cache.contains_key(file_name) {
             // Load and cache the texture
-            let image = image::ImageReader::open(&file_name)
+            let image = image::ImageReader::open(file_name)
                 .map_err(|err| format!("Error loading texture file at {}: {}", file_name, err))?
                 .decode()
                 .map_err(|err| format!("Error decoding image at {}: {}", file_name, err))?;
@@ -217,15 +213,135 @@ impl FoamGame {
             let pixels = image_buffer.as_flat_samples();
 
             let texture = ctx.load_texture(
-                &file_name,
+                file_name,
                 egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()),
                 egui::TextureOptions::default(),
             );
 
-            self.texture_cache.insert(file_name.clone(), texture);
+            self.texture_cache.insert(file_name.to_string(), texture);
         }
 
-        Ok(self.texture_cache.get(&file_name).unwrap())
+        Ok(self.texture_cache.get(file_name).unwrap())
+    }
+
+    fn draw_tile(&mut self, ui: &mut egui::Ui, tile: &Tile) -> egui::Response {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
+        let painter = ui.painter_at(rect);
+
+        // Draw the base tile image
+        painter.image(
+            self.get_texture(ui.ctx(), tile).unwrap().id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        // Draw overlays
+        match tile {
+            Tile::Move(directions) | Tile::Cloud(directions) => {
+                let center = rect.center();
+                let offset = 10.0;
+
+                let arrow_color = egui::Stroke::new(2.0, egui::Color32::BLACK);
+
+                if directions.up {
+                    painter.arrow(center, egui::vec2(0.0, -offset), arrow_color);
+                }
+                if directions.up_right {
+                    painter.arrow(center, egui::vec2(offset, -offset), arrow_color);
+                }
+                if directions.right {
+                    painter.arrow(center, egui::vec2(offset, 0.0), arrow_color);
+                }
+                if directions.down_right {
+                    painter.arrow(center, egui::vec2(offset, offset), arrow_color);
+                }
+                if directions.down {
+                    painter.arrow(center, egui::vec2(0.0, offset), arrow_color);
+                }
+                if directions.down_left {
+                    painter.arrow(center, egui::vec2(-offset, offset), arrow_color);
+                }
+                if directions.left {
+                    painter.arrow(center, egui::vec2(-offset, 0.0), arrow_color);
+                }
+                if directions.up_left {
+                    painter.arrow(center, egui::vec2(-offset, -offset), arrow_color);
+                }
+            }
+            Tile::Bounce(val) => {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{}", val),
+                    egui::FontId::monospace(16.0),
+                    egui::Color32::RED,
+                );
+            }
+            Tile::Portal(c) => {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    c.to_string(),
+                    egui::FontId::proportional(16.0),
+                    egui::Color32::YELLOW,
+                );
+            }
+            _ => {}
+        }
+
+        response
+    }
+
+    fn save_board(&self) -> Result<(), String> {
+        // open file dialog to save the board using native_dialog
+        let file_path = FileDialog::new()
+            .add_filter("Foam Game Board", &["fgb"])
+            .set_title("Save Board")
+            .show_save_single_file()
+            .ok()
+            .flatten()
+            .ok_or("No file selected".to_string())?;
+
+        // Serialize the board to a file
+        let board_data = serde_json::to_string(&self.board)
+            .map_err(|err| format!("Error serializing board data: {}", err))?;
+
+        std::fs::write(file_path, board_data)
+            .map_err(|err| format!("Error writing board file: {}", err))?;
+
+        Ok(())
+    }
+
+    fn load_board(&mut self) -> Result<(), String> {
+        // open file dialog to load the board using native_dialog
+        let file_path = FileDialog::new()
+            .add_filter("Foam Game Board", &["fgb"])
+            .set_title("Load Board")
+            .show_open_single_file()
+            .ok()
+            .flatten()
+            .ok_or("No file selected".to_string())?;
+
+        // Read the board data from the file
+        let board_data = std::fs::read_to_string(file_path)
+            .map_err(|err| format!("Error reading board file: {}", err))?;
+
+        // Deserialize the board data
+        self.board = serde_json::from_str(&board_data)
+            .map_err(|err| format!("Error deserializing board data: {}", err))?;
+
+        Ok(())
+    }
+
+    fn is_valid_board(&self) -> bool {
+        // Check if the board has a start and end tile
+        let has_start = self.board.iter().any(|row| row.contains(&Tile::StartSpace));
+        let has_end = self.board.iter().any(|row| row.contains(&Tile::EndSpace));
+        has_start && has_end
+
+        // todo later check things like matching portal pairs, etc.
     }
 }
 
@@ -283,36 +399,55 @@ fn startup_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
         // Exit startup screen
         game.startup = false;
     }
+
+    if ui.button("Load Board").clicked() {
+        // Load board from file
+        if let Err(err) = game.load_board() {
+            ui.label(format!("Error loading board: {}", err));
+        } else {
+            game.editing_mode = true;
+            game.startup = false;
+        }
+    }
 }
 
 fn editing_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Editing Mode");
 
+    // Display menus and buttons for editing the board
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            // Add UI elements for editing the board
-            if ui.button("Switch to Playing Mode").clicked() {
-                game.editing_mode = !game.editing_mode;
-            }
+            // Add UI buttons to change modes and save/load the board
+            ui.vertical(|ui| {
+                if ui.button("Switch to Playing Mode").clicked() && game.is_valid_board() {
+                    game.editing_mode = false;
+                }
+                if ui.button("Save Board").clicked() {
+                    if let Err(err) = game.save_board() {
+                        ui.label(format!("Error saving board: {}", err));
+                    } else {
+                        ui.label("Board saved successfully!");
+                    }
+                }
+                if ui.button("Load Board").clicked() {
+                    if let Err(err) = game.load_board() {
+                        ui.label(format!("Error loading board: {}", err));
+                    } else {
+                        ui.label("Board loaded successfully!");
+                    }
+                }
+            });
 
-            // Display tile selection in a 3x15 grid
             let all_tiles = all_tiles().collect::<Vec<_>>();
             egui::Grid::new("tile_selector")
                 .spacing([1.0, 1.0])
                 .show(ui, |ui| {
-                    for (index, tile_type) in all_tiles.iter().enumerate() {
-                        if ui
-                            .add(ImageButton::new(egui::Image::from_texture(
-                                game.get_texture(ctx, tile_type).unwrap_or_else(|err| {
-                                    panic!("Error loading texture: {}", err);
-                                }),
-                            )))
-                            .clicked()
-                        {
-                            game.selected_type = tile_type.clone();
+                    for (index, tile) in all_tiles.iter().enumerate() {
+                        if game.draw_tile(ui, tile).clicked() {
+                            game.selected_type = tile.clone();
                         }
 
-                        if (index + 1) % 15 == 0 {
+                        if (index + 1) % 30 == 0 {
                             ui.end_row();
                         }
                     }
@@ -321,42 +456,46 @@ fn editing_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
             ui.label("Selected Tile:")
                 .on_hover_text(game.selected_type.explanation());
             let selected_tile = game.selected_type.clone();
-            ui.add(egui::Image::new(
-                game.get_texture(ctx, &selected_tile).unwrap(),
-            ));
-        })
-    });
-
-    // Create a container for modifications
-    let mut modifications = Vec::new();
-
-    // Display the board and allow tile selection
-    egui::Grid::new("editing_board")
-        .spacing([1.0, 1.0])
-        .show(ui, |ui| {
-            for (row_idx, row) in game.board.clone().iter().enumerate() {
-                for (col_idx, tile) in row.iter().enumerate() {
-                    // Create a button with color based on the tile type
-
-                    if ui
-                        .add(ImageButton::new(egui::Image::from_texture(
-                            game.get_texture(ctx, tile).unwrap(),
-                        )))
-                        .clicked()
-                    // Click and drag doesn't work (button steals focus I think)
-                    {
-                        // Collect modification for later application
-                        modifications.push((row_idx, col_idx));
-                    }
-                }
-                ui.end_row();
-            }
+            game.draw_tile(ui, &selected_tile);
         });
 
-    // Apply all modifications after iteration is complete
-    for (row_idx, col_idx) in modifications {
-        game.board[row_idx][col_idx] = game.selected_type.clone();
-    }
+        // Create a container for modifications
+        let mut modifications = Vec::new();
+
+        // Display the board
+        egui::Grid::new("editing_board")
+            .spacing([1.0, 1.0])
+            .show(ui, |ui| {
+                for (row_idx, row) in game.board.clone().iter().enumerate() {
+                    for (col_idx, tile) in row.iter().enumerate() {
+                        if game.draw_tile(ui, tile).clicked() {
+                            // Collect modification for later application
+                            // Handle unique tiles (StartSpace and EndSpace)
+                            if matches!(game.selected_type, Tile::StartSpace | Tile::EndSpace) {
+                                let (current_pos, _) = match game.selected_type {
+                                    Tile::StartSpace => (&mut game.start_pos, true),
+                                    Tile::EndSpace => (&mut game.end_pos, false),
+                                    _ => unreachable!(),
+                                };
+
+                                if let Some(pos) = current_pos.take() {
+                                    modifications.push((pos.0, pos.1, Tile::Empty));
+                                }
+                                *current_pos = Some((row_idx, col_idx));
+                            }
+
+                            modifications.push((row_idx, col_idx, game.selected_type.clone()));
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+
+        // Apply all modifications after iteration is complete
+        for (row_idx, col_idx, tile) in modifications {
+            game.board[row_idx][col_idx] = tile;
+        }
+    });
 }
 
 fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
@@ -366,7 +505,7 @@ fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
         ui.horizontal(|ui| {
             // Add UI elements for playing the game
             if ui.button("Switch to Editing Mode").clicked() {
-                game.editing_mode = !game.editing_mode;
+                game.editing_mode = true;
             }
 
             ui.label("Player Position:")
@@ -383,12 +522,7 @@ fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
                 for row in game.board.clone().iter() {
                     for tile in row.iter() {
                         // Create a button with color based on the tile type
-                        if ui
-                            .add(ImageButton::new(egui::Image::from_texture(
-                                game.get_texture(ctx, tile).unwrap(),
-                            )))
-                            .clicked()
-                        {
+                        if game.draw_tile(ui, tile).clicked() {
                             // Handle logic later
                         }
                     }
