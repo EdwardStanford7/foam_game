@@ -418,84 +418,95 @@ fn editing_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             // Add UI buttons to change modes and save/load the board
-            ui.vertical(|ui| {
-                if ui.button("Switch to Playing Mode").clicked() && game.is_valid_board() {
-                    game.editing_mode = false;
+            if ui.button("Switch to Playing Mode").clicked() && game.is_valid_board() {
+                game.editing_mode = false;
+            }
+            if ui.button("Save Board").clicked() {
+                if let Err(err) = game.save_board() {
+                    ui.label(format!("Error saving board: {}", err));
+                } else {
+                    ui.label("Board saved successfully!");
                 }
-                if ui.button("Save Board").clicked() {
-                    if let Err(err) = game.save_board() {
-                        ui.label(format!("Error saving board: {}", err));
-                    } else {
-                        ui.label("Board saved successfully!");
-                    }
+            }
+            if ui.button("Load Board").clicked() {
+                if let Err(err) = game.load_board() {
+                    ui.label(format!("Error loading board: {}", err));
+                } else {
+                    ui.label("Board loaded successfully!");
                 }
-                if ui.button("Load Board").clicked() {
-                    if let Err(err) = game.load_board() {
-                        ui.label(format!("Error loading board: {}", err));
-                    } else {
-                        ui.label("Board loaded successfully!");
-                    }
-                }
-            });
-
-            let all_tiles = all_tiles().collect::<Vec<_>>();
-            egui::Grid::new("tile_selector")
-                .spacing([1.0, 1.0])
-                .show(ui, |ui| {
-                    for (index, tile) in all_tiles.iter().enumerate() {
-                        if game.draw_tile(ui, tile).clicked() {
-                            game.selected_type = tile.clone();
-                        }
-
-                        if (index + 1) % 30 == 0 {
-                            ui.end_row();
-                        }
-                    }
-                });
-
+            }
             ui.label("Selected Tile:")
                 .on_hover_text(game.selected_type.explanation());
             let selected_tile = game.selected_type.clone();
             game.draw_tile(ui, &selected_tile);
         });
 
-        // Create a container for modifications
-        let mut modifications = Vec::new();
-
-        // Display the board
-        egui::Grid::new("editing_board")
+        let all_tiles = all_tiles().collect::<Vec<_>>();
+        egui::Grid::new("tile_selector")
             .spacing([1.0, 1.0])
+            .min_col_width(0.0)
             .show(ui, |ui| {
-                for (row_idx, row) in game.board.clone().iter().enumerate() {
-                    for (col_idx, tile) in row.iter().enumerate() {
-                        if game.draw_tile(ui, tile).clicked() {
-                            // Collect modification for later application
-                            // Handle unique tiles (StartSpace and EndSpace)
-                            if matches!(game.selected_type, Tile::StartSpace | Tile::EndSpace) {
-                                let (current_pos, _) = match game.selected_type {
-                                    Tile::StartSpace => (&mut game.start_pos, true),
-                                    Tile::EndSpace => (&mut game.end_pos, false),
-                                    _ => unreachable!(),
-                                };
-
-                                if let Some(pos) = current_pos.take() {
-                                    modifications.push((pos.0, pos.1, Tile::Empty));
-                                }
-                                *current_pos = Some((row_idx, col_idx));
-                            }
-
-                            modifications.push((row_idx, col_idx, game.selected_type.clone()));
-                        }
+                for (index, tile) in all_tiles.iter().enumerate() {
+                    if game.draw_tile(ui, tile).clicked() {
+                        game.selected_type = tile.clone();
                     }
-                    ui.end_row();
+
+                    if (index + 1) % 30 == 0 {
+                        ui.end_row();
+                    }
                 }
             });
-
-        // Apply all modifications after iteration is complete
-        for (row_idx, col_idx, tile) in modifications {
-            game.board[row_idx][col_idx] = tile;
-        }
     });
+
+    // empty space to separate the menus from the board
+    ui.add_space(25.0);
+
+    // Create a container for modifications
+    let mut modifications = Vec::new();
+
+    // Display the board directly in the parent container, without an outer border
+    egui::Grid::new("editing_board")
+        .spacing([1.0, 1.0])
+        .min_col_width(0.0)
+        .show(ui, |ui| {
+            for (row_idx, row) in game.board.clone().iter().enumerate() {
+                for (col_idx, tile) in row.iter().enumerate() {
+                    let response = game.draw_tile(ui, tile);
+                    if response.clicked() {
+                        // Collect modification for later application
+                        // Handle unique tiles (StartSpace and EndSpace)
+                        if matches!(game.selected_type, Tile::StartSpace | Tile::EndSpace) {
+                            let (current_pos, _) = match game.selected_type {
+                                Tile::StartSpace => (&mut game.start_pos, true),
+                                Tile::EndSpace => (&mut game.end_pos, false),
+                                _ => unreachable!(),
+                            };
+
+                            if let Some(pos) = current_pos.take() {
+                                modifications.push((pos.0, pos.1, Tile::Empty));
+                            }
+                            *current_pos = Some((row_idx, col_idx));
+                        }
+
+                        modifications.push((row_idx, col_idx, game.selected_type.clone()));
+                    }
+                    // Draw faint white border around each cell
+                    let rect = response.rect;
+                    ui.painter().rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+                ui.end_row();
+            }
+        });
+
+    // Apply all modifications after iteration is complete
+    for (row_idx, col_idx, tile) in modifications {
+        game.board[row_idx][col_idx] = tile;
+    }
 }
 
 fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
@@ -518,6 +529,7 @@ fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
         // Use Grid layout for proper row/column structure
         egui::Grid::new("game_board")
             .spacing([1.0, 1.0])
+            .min_col_width(0.0)
             .show(ui, |ui| {
                 for row in game.board.clone().iter() {
                     for tile in row.iter() {
