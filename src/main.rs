@@ -12,6 +12,7 @@ struct FoamGame {
     start_pos: Option<(usize, usize)>, // position of unique start tile
     end_pos: Option<(usize, usize)>,   // position of unique end tile
     player_pos: (usize, usize),
+    previous_player_pos: (usize, usize), // Store previous player position for movement logic
     texture_cache: HashMap<String, egui::TextureHandle>, // Cache for textures to avoid reloading them every frame
     recent_keys: Vec<egui::Key>,
 }
@@ -169,7 +170,7 @@ impl FoamGame {
             .ok_or("No file selected".to_string())?;
 
         // Serialize the board to a file
-        let board_data = serde_json::to_string(&self.board)
+        let board_data = serde_json::to_string(&(&self.board, self.start_pos, self.end_pos))
             .map_err(|err| format!("Error serializing board data: {}", err))?;
 
         std::fs::write(file_path, board_data)
@@ -193,8 +194,16 @@ impl FoamGame {
             .map_err(|err| format!("Error reading board file: {}", err))?;
 
         // Deserialize the board data
-        self.board = serde_json::from_str(&board_data)
+        let (board, start_pos, end_pos): (
+            Vec<Vec<Tile>>,
+            Option<(usize, usize)>,
+            Option<(usize, usize)>,
+        ) = serde_json::from_str(&board_data)
             .map_err(|err| format!("Error deserializing board data: {}", err))?;
+
+        self.board = board;
+        self.start_pos = start_pos;
+        self.end_pos = end_pos;
 
         Ok(())
     }
@@ -221,6 +230,7 @@ impl Default for FoamGame {
             start_pos: None,
             end_pos: None,
             player_pos: (0, 0),
+            previous_player_pos: (0, 0),
             texture_cache: HashMap::new(),
             recent_keys: Vec::new(),
         }
@@ -248,6 +258,7 @@ fn startup_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Select board size:");
 
     ui.horizontal(|ui| {
+        // MARK: switch to rows columns
         ui.label("Width:");
         ui.add(egui::Slider::new(&mut game.board_size.0, 5..=40).integer());
     });
@@ -286,6 +297,7 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
             // Add UI buttons to change modes and save/load the board
             if ui.button("Switch to Playing Mode").clicked() && game.is_valid_board() {
                 game.editing_mode = false;
+                game.player_pos = game.start_pos.unwrap();
             }
             if ui.button("Save Board").clicked() {
                 if let Err(err) = game.save_board() {
@@ -306,14 +318,14 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
 
             let selected_tile = game.selected_type.clone();
 
-            draw_tile(game, &selected_tile, ui);
+            draw_tile(game, &selected_tile, ui, false);
         });
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             for tile in all_tiles() {
-                if draw_tile(game, &tile, ui).clicked() {
+                if draw_tile(game, &tile, ui, false).clicked() {
                     game.selected_type = tile;
                 }
             }
@@ -330,10 +342,10 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
         .spacing([1.0, 1.0])
         .min_col_width(0.0)
         .show(ui, |ui| {
-            for row in 0..game.board.len() {
+            for row in 0..game.board_size.1 {
                 // in game.board.iter().enumerate() {
-                for col in 0..game.board[row].len() {
-                    let response = draw_tile(game, &game.board[row][col].clone(), ui);
+                for col in 0..game.board_size.0 {
+                    let response = draw_tile(game, &game.board[row][col].clone(), ui, false);
                     if response.clicked() {
                         // Update the selected tile
                         game.selected_tile_pos = Some((row, col));
@@ -478,38 +490,171 @@ fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Playing Mode");
 
     ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            // Add UI elements for playing the game
-            if ui.button("Switch to Editing Mode").clicked() {
-                game.editing_mode = true;
-            }
+        if ui.button("Switch to Editing Mode").clicked() {
+            game.editing_mode = true;
+        }
 
-            ui.label("Player Position:")
-                .on_hover_text("The current position of the player");
-            ui.label(format!("({}, {})", game.player_pos.0, game.player_pos.1));
-        });
+        ui.add_space(50.0);
 
-        // Display the board and player position
-
-        // Use Grid layout for proper row/column structure
+        // Display board
         egui::Grid::new("game_board")
             .spacing([1.0, 1.0])
             .min_col_width(0.0)
             .show(ui, |ui| {
-                for row in 0..game.board.len() {
-                    for col in 0..game.board[row].len() {
-                        // Create a button with color based on the tile type
-                        if draw_tile(game, &game.board[row][col].clone(), ui).clicked() {
+                for row in 0..game.board_size.1 {
+                    for col in 0..game.board_size.0 {
+                        // Draw the tile and get its response
+                        let response = draw_tile(
+                            game,
+                            &game.board[row][col].clone(),
+                            ui,
+                            game.player_pos == (row, col),
+                        );
+                        if response.clicked() {
                             // Handle logic later
                         }
+                        // Draw faint white border around each cell
+                        let rect = response.rect;
+                        ui.painter().rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                            egui::StrokeKind::Outside,
+                        );
                     }
                     ui.end_row();
                 }
             });
     });
+
+    // Handle player movement
+    eprintln!("Player position: {:?}", game.player_pos);
+
+    // If moving from a cloud tile, remove it
+    if matches!(
+        game.board[game.previous_player_pos.0][game.previous_player_pos.1],
+        Tile::Cloud(_)
+    ) && game.previous_player_pos != game.player_pos
+    {
+        game.board[game.previous_player_pos.0][game.previous_player_pos.1] = Tile::Empty;
+    }
+
+    let current_tile = &game.board[game.player_pos.0][game.player_pos.1];
+    let mut new_pos: (isize, isize) = (game.player_pos.0 as isize, game.player_pos.1 as isize);
+
+    match current_tile {
+        Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
+            // Handle cardinal movement based on allowed directions
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp) && directions.up)
+                && game.player_pos.0 > 0
+            {
+                new_pos.0 -= 1; // Move up
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown) && directions.down)
+                && game.player_pos.0 < game.board_size.1 - 1
+            {
+                new_pos.0 += 1; // Move down
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft) && directions.left)
+                && game.player_pos.1 > 0
+            {
+                new_pos.1 -= 1; // Move left
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowRight) && directions.right)
+                && game.player_pos.1 < game.board_size.0 - 1
+            {
+                new_pos.1 += 1; // Move right
+            }
+        }
+        Tile::MoveDiagonal(directions) => {
+            // Handle diagonal movement based on allowed directions
+            let input = ui.input(|i| i.clone());
+
+            for key in [
+                egui::Key::ArrowUp,
+                egui::Key::ArrowRight,
+                egui::Key::ArrowDown,
+                egui::Key::ArrowLeft,
+            ] {
+                if input.key_pressed(key) {
+                    game.recent_keys.push(key);
+                    if game.recent_keys.len() > 2 {
+                        game.recent_keys.remove(0); // Keep only last two
+                    }
+                }
+            }
+
+            if game.recent_keys.len() == 2 {
+                use egui::Key::*;
+                let (a, b) = (game.recent_keys[0], game.recent_keys[1]);
+
+                match (a, b) {
+                    (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) if directions.up_right => {
+                        new_pos.0 -= 1;
+                        new_pos.1 += 1; // Move up-right
+                        game.recent_keys.clear();
+                    }
+                    (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown) if directions.down_right => {
+                        new_pos.0 += 1;
+                        new_pos.1 += 1; // Move down-right
+                        game.recent_keys.clear();
+                    }
+                    (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) if directions.down_left => {
+                        new_pos.0 += 1;
+                        new_pos.1 -= 1; // Move down-left
+                        game.recent_keys.clear();
+                    }
+                    (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) if directions.up_left => {
+                        new_pos.0 -= 1;
+                        new_pos.1 -= 1; // Move up-left
+                        game.recent_keys.clear();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Tile::StartSpace => {
+            // Allow movement in all directions from start space
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && game.player_pos.0 > 0 {
+                new_pos.0 -= 1; // Move up
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown))
+                && game.player_pos.0 < game.board_size.1 - 1
+            {
+                new_pos.0 += 1; // Move down
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) && game.player_pos.1 > 0 {
+                new_pos.1 -= 1; // Move left
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowRight))
+                && game.player_pos.1 < game.board_size.0 - 1
+            {
+                new_pos.1 += 1; // Move right
+            }
+        }
+        _ => {}
+    }
+
+    // Check if new position is valid
+    if new_pos.0 >= 0
+        && new_pos.0 < game.board_size.1 as isize
+        && new_pos.1 >= 0
+        && new_pos.1 < game.board_size.0 as isize
+    {
+        // if at end space, end the game
+        if matches!(
+            game.board[new_pos.0 as usize][new_pos.1 as usize],
+            Tile::EndSpace
+        ) {
+            game.editing_mode = true; // Switch back to editing mode
+        }
+
+        game.previous_player_pos = game.player_pos; // Store previous position for movement logic
+        game.player_pos = (new_pos.0 as usize, new_pos.1 as usize);
+    }
 }
 
-fn draw_tile(game: &mut FoamGame, tile: &Tile, ui: &mut egui::Ui) -> egui::Response {
+fn draw_tile(game: &mut FoamGame, tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
     let painter = ui.painter_at(rect);
@@ -579,6 +724,14 @@ fn draw_tile(game: &mut FoamGame, tile: &Tile, ui: &mut egui::Ui) -> egui::Respo
             );
         }
         _ => {}
+    }
+
+    // MARK: hehehehe HACKS
+    if player {
+        // Draw player position indicator as a red circle in top right corner
+        let circle_radius = 8.0;
+        let circle_center = egui::Pos2::new(rect.max.x - circle_radius, rect.min.y + circle_radius);
+        painter.circle_filled(circle_center, circle_radius, egui::Color32::BLACK);
     }
 
     response.on_hover_text(tile.explanation())
