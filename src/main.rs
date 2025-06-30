@@ -411,7 +411,7 @@ fn startup_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     }
 }
 
-fn editing_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
+fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Editing Mode");
 
     // Display menus and buttons for editing the board
@@ -509,7 +509,7 @@ fn editing_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     }
 }
 
-fn play_screen(ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
+fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Playing Mode");
 
     ui.vertical(|ui| {
