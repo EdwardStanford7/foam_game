@@ -338,7 +338,9 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
                         // Update the selected tile
                         game.selected_tile_pos = Some((row, col));
 
-                        if game.selected_type == game.board[row][col] {
+                        if std::mem::discriminant(&game.selected_type)
+                            == std::mem::discriminant(&game.board[row][col])
+                        {
                             continue; // Skip modification for this tile
                         }
 
