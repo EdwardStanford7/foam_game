@@ -6,127 +6,39 @@ struct FoamGame {
     startup: bool,
     editing_mode: bool,
     selected_type: Tile,
+    selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
     board_size: (usize, usize),
     board: Vec<Vec<Tile>>,
     start_pos: Option<(usize, usize)>, // position of unique start tile
     end_pos: Option<(usize, usize)>,   // position of unique end tile
     player_pos: (usize, usize),
     texture_cache: HashMap<String, egui::TextureHandle>, // Cache for textures to avoid reloading them every frame
+    recent_keys: Vec<egui::Key>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
-struct DirectionsAllowed {
+struct CardinalDirectionsAllowed {
     up: bool,
-    up_right: bool,
     right: bool,
-    down_right: bool,
     down: bool,
-    down_left: bool,
     left: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+struct DiagonalDirectionsAllowed {
+    up_right: bool,
+    down_right: bool,
+    down_left: bool,
     up_left: bool,
 }
-
-struct DirectionsAllowedIter {
-    inner: DirectionsAllowed,
-    remaining: usize,
-}
-
-impl DirectionsAllowedIter {
-    pub fn new() -> Self {
-        DirectionsAllowedIter {
-            inner: DirectionsAllowed {
-                up: false,
-                up_right: false,
-                right: false,
-                down_right: false,
-                down: false,
-                down_left: false,
-                left: false,
-                up_left: false,
-            },
-            remaining: 255, // 2^8 - 1 = 255, all combinations of 8 directions
-        }
-    }
-}
-
-impl Iterator for DirectionsAllowedIter {
-    type Item = DirectionsAllowed;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        self.remaining -= 1;
-
-        if self.inner.up {
-            self.inner.up = false;
-            if self.inner.up_right {
-                self.inner.up_right = false;
-                if self.inner.right {
-                    self.inner.right = false;
-                    if self.inner.down_right {
-                        self.inner.down_right = false;
-                        if self.inner.down {
-                            self.inner.down = false;
-                            if self.inner.down_left {
-                                self.inner.down_left = false;
-                                if self.inner.left {
-                                    self.inner.left = false;
-                                    if self.inner.up_left {
-                                        self.inner.up_left = false;
-                                        unreachable!("Iterated through more than 15 directions");
-                                    } else {
-                                        self.inner.up_left = true;
-                                    }
-                                } else {
-                                    self.inner.left = true;
-                                }
-                            } else {
-                                self.inner.down_left = true;
-                            }
-                        } else {
-                            self.inner.down = true;
-                        }
-                    } else {
-                        self.inner.down_right = true;
-                    }
-                } else {
-                    self.inner.right = true;
-                }
-            } else {
-                self.inner.up_right = true;
-            }
-        } else {
-            self.inner.up = true;
-        }
-        Some(self.inner.clone())
-    }
-}
-
-// struct Direction(isize, isize);
-
-// use std::ops::Index;
-
-// impl Index<Direction> for DirectionsAllowed {
-//     type Output = bool;
-
-//     fn index(&self, index: Direction) -> &Self::Output {
-//         match index {
-//             Direction(0, 1) => &self.up,
-//             Direction(0, -1) => &self.down,
-//             Direction(-1, 0) => &self.left,
-//             Direction(1, 0) => &self.right,
-//             _ => panic!("Invalid direction"),
-//         }
-//     }
-// }
 
 // Each tile occupies one space on the board, and has different rules for movement
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 enum Tile {
     Empty,
-    Move(DirectionsAllowed),
-    Cloud(DirectionsAllowed), // Clouds, disappear after one use
+    MoveCardinal(CardinalDirectionsAllowed),
+    MoveDiagonal(DiagonalDirectionsAllowed), // Move in specific directions, can be cardinal or diagonal
+    Cloud(CardinalDirectionsAllowed),        // Clouds, disappear after one use
     Bounce(isize), // Bounce some amount of squares, +/- some amount of acceleration or deceleration
     Portal(char),  // Portal, teleport to other portal with same letter
     Water,         // Water
@@ -138,29 +50,44 @@ enum Tile {
 }
 
 fn all_tiles() -> impl Iterator<Item = Tile> {
-    DirectionsAllowedIter::new()
-        .map(Tile::Move)
-        .chain(DirectionsAllowedIter::new().map(Tile::Cloud))
-        .chain(vec![
-            Tile::Bounce(1),
-            Tile::Bounce(0),
-            Tile::Bounce(-1),
-            Tile::Portal('A'),
-            Tile::Water,
-            Tile::Ice,
-            Tile::Door,
-            Tile::Wall,
-            Tile::StartSpace,
-            Tile::EndSpace,
-            Tile::Empty,
-        ])
+    vec![
+        Tile::MoveCardinal(CardinalDirectionsAllowed {
+            up: true,
+            right: true,
+            down: true,
+            left: true,
+        }),
+        Tile::MoveDiagonal(DiagonalDirectionsAllowed {
+            up_right: true,
+            down_right: true,
+            down_left: true,
+            up_left: true,
+        }),
+        Tile::Cloud(CardinalDirectionsAllowed {
+            up: true,
+            right: true,
+            down: true,
+            left: true,
+        }),
+        Tile::Bounce(0),
+        Tile::Portal('A'),
+        Tile::Water,
+        Tile::Ice,
+        Tile::Door,
+        Tile::Wall,
+        Tile::StartSpace,
+        Tile::EndSpace,
+        Tile::Empty,
+    ]
+    .into_iter()
 }
 
 impl Tile {
     pub fn file_name(&self) -> &str {
         match self {
             Tile::Empty => "assets/empty.png",
-            Tile::Move(_) => "assets/move.png",
+            Tile::MoveCardinal(_) => "assets/move_cardinal.png",
+            Tile::MoveDiagonal(_) => "assets/move_diagonal.png",
             Tile::Cloud(_) => "assets/cloud.png",
             Tile::Bounce(_) => "assets/bounce.png",
             Tile::Portal(_) => "assets/portal.png",
@@ -176,8 +103,15 @@ impl Tile {
     pub fn explanation(&self) -> &str {
         match self {
             Tile::Empty => "An empty tile, no special properties.",
-            Tile::Move(_) => "A tile that allows movement in specific directions.",
-            Tile::Cloud(_) => "A cloud tile that disappears after one use.",
+            Tile::MoveCardinal(_) => {
+                "A tile that allows moving up, down, left, right. Use arrow keys to toggle directions."
+            }
+            Tile::MoveDiagonal(_) => {
+                "A tile that allows moving up-right, down-right, down-left, up-left. Use arrow keys to toggle directions."
+            }
+            Tile::Cloud(_) => {
+                "A cloud tile that disappears after one use. Use arrow keys to toggle directions."
+            }
             Tile::Bounce(_) => "A tile that bounces the player a certain distance.",
             Tile::Portal(_) => "A portal tile that teleports the player to another location.",
             Tile::Water => "A water tile, which may have special movement rules.",
@@ -222,76 +156,6 @@ impl FoamGame {
         }
 
         Ok(self.texture_cache.get(file_name).unwrap())
-    }
-
-    fn draw_tile(&mut self, ui: &mut egui::Ui, tile: &Tile) -> egui::Response {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
-        let painter = ui.painter_at(rect);
-
-        // Draw the base tile image
-        painter.image(
-            self.get_texture(ui.ctx(), tile).unwrap().id(),
-            rect,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-
-        // Draw overlays
-        match tile {
-            Tile::Move(directions) | Tile::Cloud(directions) => {
-                let center = rect.center();
-                let offset = 10.0;
-
-                let arrow_color = egui::Stroke::new(2.0, egui::Color32::BLACK);
-
-                if directions.up {
-                    painter.arrow(center, egui::vec2(0.0, -offset), arrow_color);
-                }
-                if directions.up_right {
-                    painter.arrow(center, egui::vec2(offset, -offset), arrow_color);
-                }
-                if directions.right {
-                    painter.arrow(center, egui::vec2(offset, 0.0), arrow_color);
-                }
-                if directions.down_right {
-                    painter.arrow(center, egui::vec2(offset, offset), arrow_color);
-                }
-                if directions.down {
-                    painter.arrow(center, egui::vec2(0.0, offset), arrow_color);
-                }
-                if directions.down_left {
-                    painter.arrow(center, egui::vec2(-offset, offset), arrow_color);
-                }
-                if directions.left {
-                    painter.arrow(center, egui::vec2(-offset, 0.0), arrow_color);
-                }
-                if directions.up_left {
-                    painter.arrow(center, egui::vec2(-offset, -offset), arrow_color);
-                }
-            }
-            Tile::Bounce(val) => {
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    format!("{}", val),
-                    egui::FontId::monospace(16.0),
-                    egui::Color32::RED,
-                );
-            }
-            Tile::Portal(c) => {
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    c.to_string(),
-                    egui::FontId::proportional(16.0),
-                    egui::Color32::YELLOW,
-                );
-            }
-            _ => {}
-        }
-
-        response
     }
 
     fn save_board(&self) -> Result<(), String> {
@@ -351,12 +215,14 @@ impl Default for FoamGame {
             startup: true,
             editing_mode: false,
             selected_type: Tile::Empty,
+            selected_tile_pos: None,
             board_size: (0, 0),
             board: vec![],
             start_pos: None,
             end_pos: None,
             player_pos: (0, 0),
             texture_cache: HashMap::new(),
+            recent_keys: Vec::new(),
         }
     }
 }
@@ -437,42 +303,45 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
             }
             ui.label("Selected Tile:")
                 .on_hover_text(game.selected_type.explanation());
+
             let selected_tile = game.selected_type.clone();
-            game.draw_tile(ui, &selected_tile);
+
+            draw_tile(game, &selected_tile, ui);
         });
 
-        let all_tiles = all_tiles().collect::<Vec<_>>();
-        egui::Grid::new("tile_selector")
-            .spacing([1.0, 1.0])
-            .min_col_width(0.0)
-            .show(ui, |ui| {
-                for (index, tile) in all_tiles.iter().enumerate() {
-                    if game.draw_tile(ui, tile).clicked() {
-                        game.selected_type = tile.clone();
-                    }
+        ui.add_space(5.0);
 
-                    if (index + 1) % 30 == 0 {
-                        ui.end_row();
-                    }
+        ui.horizontal(|ui| {
+            for tile in all_tiles() {
+                if draw_tile(game, &tile, ui).clicked() {
+                    game.selected_type = tile;
                 }
-            });
+            }
+        });
     });
 
-    // empty space to separate the menus from the board
     ui.add_space(25.0);
 
     // Create a container for modifications
     let mut modifications = Vec::new();
 
-    // Display the board directly in the parent container, without an outer border
+    // Display the board
     egui::Grid::new("editing_board")
         .spacing([1.0, 1.0])
         .min_col_width(0.0)
         .show(ui, |ui| {
-            for (row_idx, row) in game.board.clone().iter().enumerate() {
-                for (col_idx, tile) in row.iter().enumerate() {
-                    let response = game.draw_tile(ui, tile);
+            for row in 0..game.board.len() {
+                // in game.board.iter().enumerate() {
+                for col in 0..game.board[row].len() {
+                    let response = draw_tile(game, &game.board[row][col].clone(), ui);
                     if response.clicked() {
+                        // Update the selected tile
+                        game.selected_tile_pos = Some((row, col));
+
+                        if game.selected_type == game.board[row][col] {
+                            continue; // Skip modification for this tile
+                        }
+
                         // Collect modification for later application
                         // Handle unique tiles (StartSpace and EndSpace)
                         if matches!(game.selected_type, Tile::StartSpace | Tile::EndSpace) {
@@ -485,10 +354,10 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
                             if let Some(pos) = current_pos.take() {
                                 modifications.push((pos.0, pos.1, Tile::Empty));
                             }
-                            *current_pos = Some((row_idx, col_idx));
+                            *current_pos = Some((row, col));
                         }
 
-                        modifications.push((row_idx, col_idx, game.selected_type.clone()));
+                        modifications.push((row, col, game.selected_type.clone()));
                     }
                     // Draw faint white border around each cell
                     let rect = response.rect;
@@ -506,6 +375,100 @@ fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) 
     // Apply all modifications after iteration is complete
     for (row_idx, col_idx, tile) in modifications {
         game.board[row_idx][col_idx] = tile;
+    }
+
+    // Keyboard input for tile modification.
+    if game.selected_tile_pos.is_none() {
+        return; // No tile selected, skip input handling
+    }
+
+    match &mut game.board[game.selected_tile_pos.unwrap().0][game.selected_tile_pos.unwrap().1] {
+        Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                directions.up = !directions.up;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                directions.right = !directions.right;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                directions.down = !directions.down;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                directions.left = !directions.left;
+            }
+        }
+        Tile::MoveDiagonal(directions) => {
+            let input = ui.input(|i| i.clone());
+
+            for key in [
+                egui::Key::ArrowUp,
+                egui::Key::ArrowRight,
+                egui::Key::ArrowDown,
+                egui::Key::ArrowLeft,
+            ] {
+                if input.key_pressed(key) {
+                    game.recent_keys.push(key);
+                    if game.recent_keys.len() > 2 {
+                        game.recent_keys.remove(0); // Keep only last two
+                    }
+                }
+            }
+
+            if game.recent_keys.len() == 2 {
+                use egui::Key::*;
+                let (a, b) = (game.recent_keys[0], game.recent_keys[1]);
+
+                match (a, b) {
+                    (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) => {
+                        directions.up_right = !directions.up_right;
+                        game.recent_keys.clear();
+                    }
+                    (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown) => {
+                        directions.down_right = !directions.down_right;
+                        game.recent_keys.clear();
+                    }
+                    (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) => {
+                        directions.down_left = !directions.down_left;
+                        game.recent_keys.clear();
+                    }
+                    (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) => {
+                        directions.up_left = !directions.up_left;
+                        game.recent_keys.clear();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Tile::Bounce(val) => {
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp) && *val < 1) {
+                *val += 1; // Increase bounce value
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown) && *val > -1) {
+                *val -= 1; // Decrease bounce value
+            }
+        }
+        Tile::Portal(c) => {
+            ui.input(|i| {
+                if i.key_pressed(egui::Key::A) {
+                    *c = 'A';
+                } else if i.key_pressed(egui::Key::B) {
+                    *c = 'B';
+                } else if i.key_pressed(egui::Key::C) {
+                    *c = 'C';
+                } else if i.key_pressed(egui::Key::D) {
+                    *c = 'D';
+                } else if i.key_pressed(egui::Key::E) {
+                    *c = 'E';
+                } else if i.key_pressed(egui::Key::F) {
+                    *c = 'F';
+                } else if i.key_pressed(egui::Key::G) {
+                    *c = 'G';
+                } else if i.key_pressed(egui::Key::H) {
+                    *c = 'H';
+                }
+            });
+        }
+        _ => {}
     }
 }
 
@@ -531,10 +494,10 @@ fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
             .spacing([1.0, 1.0])
             .min_col_width(0.0)
             .show(ui, |ui| {
-                for row in game.board.clone().iter() {
-                    for tile in row.iter() {
+                for row in 0..game.board.len() {
+                    for col in 0..game.board[row].len() {
                         // Create a button with color based on the tile type
-                        if game.draw_tile(ui, tile).clicked() {
+                        if draw_tile(game, &game.board[row][col].clone(), ui).clicked() {
                             // Handle logic later
                         }
                     }
@@ -542,6 +505,81 @@ fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
                 }
             });
     });
+}
+
+fn draw_tile(game: &mut FoamGame, tile: &Tile, ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
+    let painter = ui.painter_at(rect);
+
+    // Draw the base tile image
+    painter.image(
+        game.get_texture(ui.ctx(), tile).unwrap().id(),
+        rect,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+
+    // Draw overlays
+    match tile {
+        Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
+            let center = rect.center();
+            let offset = 10.0;
+            let arrow_color = egui::Stroke::new(2.0, egui::Color32::BLACK);
+
+            if directions.up {
+                painter.arrow(center, egui::vec2(0.0, -offset), arrow_color);
+            }
+            if directions.right {
+                painter.arrow(center, egui::vec2(offset, 0.0), arrow_color);
+            }
+            if directions.down {
+                painter.arrow(center, egui::vec2(0.0, offset), arrow_color);
+            }
+            if directions.left {
+                painter.arrow(center, egui::vec2(-offset, 0.0), arrow_color);
+            }
+        }
+        Tile::MoveDiagonal(directions) => {
+            let center = rect.center();
+            let offset = 10.0;
+            let arrow_color = egui::Stroke::new(2.0, egui::Color32::BLACK);
+
+            if directions.up_right {
+                painter.arrow(center, egui::vec2(offset, -offset), arrow_color);
+            }
+            if directions.down_right {
+                painter.arrow(center, egui::vec2(offset, offset), arrow_color);
+            }
+            if directions.down_left {
+                painter.arrow(center, egui::vec2(-offset, offset), arrow_color);
+            }
+            if directions.up_left {
+                painter.arrow(center, egui::vec2(-offset, -offset), arrow_color);
+            }
+        }
+        Tile::Bounce(val) => {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{}", val),
+                egui::FontId::monospace(16.0),
+                egui::Color32::RED,
+            );
+        }
+        Tile::Portal(c) => {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                c.to_string(),
+                egui::FontId::monospace(30.0),
+                egui::Color32::GREEN,
+            );
+        }
+        _ => {}
+    }
+
+    response.on_hover_text(tile.explanation())
 }
 
 fn main() {
