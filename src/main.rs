@@ -3,6 +3,8 @@
 */
 
 mod game;
+mod editing;
+mod playing;
 mod tile;
 
 /*

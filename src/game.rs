@@ -1,13 +1,15 @@
 //!
 //! Main game engine using egui
 //!
-//! Includes two modes: editing mode and playing mode.
+//! Includes three modes: startup mode, editing mode, and playing mode.
 
 use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
 
 use super::tile::{ALL_TILES, Tile};
+use super::editing::EditingBoard;
+use super::playing::PlayingBoard;
 
 #[derive(Debug, Clone)]
 pub enum GameMode {
@@ -18,15 +20,9 @@ pub enum GameMode {
 
 pub struct FoamGame {
     mode: GameMode,
-    selected_type: Tile,
-    selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
-    board_size: (usize, usize),
-    editing_board: Vec<Vec<Tile>>,
-    playing_board: Vec<Vec<Tile>>,
-    start_pos: Option<(usize, usize)>, // position of unique start tile
-    end_pos: Option<(usize, usize)>,   // position of unique end tile
-    player_pos: (usize, usize),
-    previous_player_pos: (usize, usize), // Store previous player position for movement logic
+    board_size: (usize, usize), // Size of the board as (width, height)
+    editing_board: EditingBoard,
+    playing_board: Option<PlayingBoard>,
     texture_cache: HashMap<String, egui::TextureHandle>, // Cache for textures to avoid reloading them every frame
     recent_keys: Vec<egui::Key>,
 }
@@ -77,7 +73,7 @@ impl FoamGame {
 
         // Serialize the board to a file
         let board_data =
-            serde_json::to_string(&(&self.editing_board, self.start_pos, self.end_pos))
+            serde_json::to_string(&self.editing_board)
                 .map_err(|err| format!("Error serializing board data: {}", err))?;
 
         std::fs::write(file_path, board_data)
@@ -101,49 +97,23 @@ impl FoamGame {
             .map_err(|err| format!("Error reading board file: {}", err))?;
 
         // Deserialize the board data
-        let (board, start_pos, end_pos): (
-            Vec<Vec<Tile>>,
-            Option<(usize, usize)>,
-            Option<(usize, usize)>,
-        ) = serde_json::from_str(&board_data)
+        let board: EditingBoard = serde_json::from_str(&board_data)
             .map_err(|err| format!("Error deserializing board data: {}", err))?;
 
         self.editing_board = board;
-        self.start_pos = start_pos;
-        self.end_pos = end_pos;
 
         Ok(())
     }
 
-    fn is_valid_board(&self) -> bool {
-        // Check if the board has a start and end tile
-        let has_start = self
-            .editing_board
-            .iter()
-            .any(|row| row.contains(&Tile::StartSpace));
-        let has_end = self
-            .editing_board
-            .iter()
-            .any(|row| row.contains(&Tile::EndSpace));
-        has_start && has_end
-
-        // todo later check things like matching portal pairs, etc.
-    }
 }
 
 impl Default for FoamGame {
     fn default() -> Self {
-        FoamGame {
+        Self {
             mode: GameMode::Startup,
-            selected_type: Tile::Empty,
-            selected_tile_pos: None,
             board_size: (0, 0),
-            editing_board: vec![],
-            playing_board: vec![],
-            start_pos: None,
-            end_pos: None,
-            player_pos: (0, 0),
-            previous_player_pos: (0, 0),
+            editing_board: Default::default(),
+            playing_board: None,
             texture_cache: HashMap::new(),
             recent_keys: Vec::new(),
         }
@@ -154,8 +124,8 @@ impl eframe::App for FoamGame {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| match self.mode {
             GameMode::Startup => startup_screen(ui, self),
-            GameMode::Editing => editing_screen(ctx, ui, self),
-            GameMode::Playing => play_screen(ctx, ui, self),
+            GameMode::Editing => editing_screen(ui, self),
+            GameMode::Playing => play_screen(ui, self),
         });
     }
 }
@@ -183,7 +153,7 @@ fn startup_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
 
     if ui.button("Start Editing").clicked() {
         // Initialize the board with the selected size
-        game.editing_board = vec![vec![Tile::Empty; game.board_size.0]; game.board_size.1];
+        game.editing_board.set_size(game.board_size.0, game.board_size.1);
         // Switch to editing mode
         game.mode = GameMode::Editing;
     }
@@ -199,27 +169,25 @@ fn startup_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     }
 }
 
-fn editing_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
+
+/*
+    Editing mode
+*/
+
+fn editing_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Editing Mode");
     display_editing_menu(ui, game);
     ui.add_space(25.0);
     display_editing_board(ui, game);
 
     // Keyboard input for tile modification.
-    if game.selected_tile_pos.is_none() {
-        return; // No tile selected, skip input handling
-    }
-    editing_keyboard_input(ui, game);
+    if game.editing_board.has_selected_tile() {
+        editing_keyboard_input(ui, game);
+    } // Else: no tile selected, skip input handling
 }
 
-/*
-    Editing mode
-*/
-
 fn editing_keyboard_input(ui: &mut egui::Ui, game: &mut FoamGame) {
-    match &mut game.editing_board[game.selected_tile_pos.unwrap().0]
-        [game.selected_tile_pos.unwrap().1]
-    {
+    match game.editing_board.get_selected_tile_mut().expect("Selected tile invalid or not set") {
         Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
             if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 directions.up = !directions.up;
@@ -321,34 +289,39 @@ fn display_editing_board(ui: &mut egui::Ui, game: &mut FoamGame) {
             for row in 0..game.board_size.1 {
                 // in game.board.iter().enumerate() {
                 for col in 0..game.board_size.0 {
+                    let tile = game.editing_board.get_tile(row, col).unwrap().clone();
                     let response =
-                        draw_tile(game, &game.editing_board[row][col].clone(), ui, false);
+                        draw_tile(game, &tile, ui, false);
                     if response.clicked() {
                         // Update the selected tile
-                        game.selected_tile_pos = Some((row, col));
+                        game.editing_board.select_tile_position(row, col);
+                        let selected_type = game.editing_board.get_selected_type().clone();
 
-                        if std::mem::discriminant(&game.selected_type)
-                            == std::mem::discriminant(&game.editing_board[row][col])
+                        // TODO: this is weird??
+                        if std::mem::discriminant(&selected_type)
+                            == std::mem::discriminant(game.editing_board.get_tile(row, col).unwrap())
                         {
                             continue; // Skip modification for this tile
                         }
 
                         // Collect modification for later application
+                        // ???
                         // Handle unique tiles (StartSpace and EndSpace)
-                        if matches!(game.selected_type, Tile::StartSpace | Tile::EndSpace) {
-                            let (current_pos, _) = match game.selected_type {
-                                Tile::StartSpace => (&mut game.start_pos, true),
-                                Tile::EndSpace => (&mut game.end_pos, false),
-                                _ => unreachable!(),
-                            };
-
-                            if let Some(pos) = current_pos.take() {
+                        if matches!(selected_type, Tile::StartSpace) {
+                            let pos = game.editing_board.get_start_pos();
+                            if let Some(pos) = pos {
                                 modifications.push((pos.0, pos.1, Tile::Empty));
                             }
-                            *current_pos = Some((row, col));
+                            game.editing_board.set_start_pos(row, col);
+                        } else if matches!(selected_type, Tile::EndSpace) {
+                            let pos = game.editing_board.get_end_pos();
+                            if let Some(pos) = pos {
+                                modifications.push((pos.0, pos.1, Tile::Empty));
+                            }
+                            game.editing_board.set_end_pos(row, col);
                         }
 
-                        modifications.push((row, col, game.selected_type.clone()));
+                        modifications.push((row, col, selected_type));
                     }
                     // Draw faint white border around each cell
                     let rect = response.rect;
@@ -365,19 +338,19 @@ fn display_editing_board(ui: &mut egui::Ui, game: &mut FoamGame) {
 
     // Apply all modifications after iteration is complete
     for (row_idx, col_idx, tile) in modifications {
-        game.editing_board[row_idx][col_idx] = tile;
+        *game.editing_board.get_tile_mut(row_idx, col_idx).unwrap() = tile;
     }
 }
+
 
 fn display_editing_menu(ui: &mut egui::Ui, game: &mut FoamGame) {
     // Display menus and buttons for editing the board
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             // Add UI buttons to change modes and save/load the board
-            if ui.button("Switch to Playing Mode").clicked() && game.is_valid_board() {
+            if ui.button("Switch to Playing Mode").clicked() && game.editing_board.is_playable_board() {
                 game.mode = GameMode::Playing;
-                game.player_pos = game.start_pos.unwrap();
-                game.playing_board = game.editing_board.clone();
+                game.playing_board = Some(PlayingBoard::new(&game.editing_board).unwrap());
             }
             if ui.button("Save Board").clicked() {
                 if let Err(err) = game.save_board() {
@@ -393,12 +366,11 @@ fn display_editing_menu(ui: &mut egui::Ui, game: &mut FoamGame) {
                     ui.label("Board loaded successfully!");
                 }
             }
-            ui.label("Selected Tile:")
-                .on_hover_text(game.selected_type.explanation());
 
-            let selected_tile = game.selected_type.clone();
+            let selected_type = game.editing_board.get_selected_type().clone();
+            ui.label("Selected Tile:").on_hover_text(selected_type.explanation());
 
-            draw_tile(game, &selected_tile, ui, false);
+            draw_tile(game, &selected_type, ui, false);
         });
 
         ui.add_space(5.0);
@@ -406,7 +378,7 @@ fn display_editing_menu(ui: &mut egui::Ui, game: &mut FoamGame) {
         ui.horizontal(|ui| {
             for tile in ALL_TILES {
                 if draw_tile(game, tile, ui, false).clicked() {
-                    game.selected_type = tile.clone();
+                    game.editing_board.select_type(tile.clone());
                 }
             }
         });
@@ -417,7 +389,7 @@ fn display_editing_menu(ui: &mut egui::Ui, game: &mut FoamGame) {
     Play mode
 */
 
-fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
+fn play_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Playing Mode");
 
     display_playing_board(ui, game);
@@ -425,18 +397,18 @@ fn play_screen(_ctx: &egui::Context, ui: &mut egui::Ui, game: &mut FoamGame) {
     handle_player_movement(ui, game);
 }
 
-fn handle_player_movement(ui: &mut egui::Ui, game: &mut FoamGame) {
+fn handle_player_movement(ui: &mut egui::Ui, board: &mut PlayingBoard, recent_keys: &mut Vec<egui::Key>) {
     // If moving from a cloud tile, remove it
     if matches!(
-        game.playing_board[game.previous_player_pos.0][game.previous_player_pos.1],
+        board.previous_tile(),
         Tile::Cloud(_)
-    ) && game.previous_player_pos != game.player_pos
+    ) && board.position_is_new()
     {
-        game.playing_board[game.previous_player_pos.0][game.previous_player_pos.1] = Tile::Empty;
+        board.set_previous_tile(Tile::Empty);
     }
 
-    let current_tile = &game.playing_board[game.player_pos.0][game.player_pos.1];
-    let mut new_pos: (isize, isize) = (game.player_pos.0 as isize, game.player_pos.1 as isize);
+    let current_tile = board.current_tile();
+    let mut new_pos: (isize, isize) = board.get_player_position_isize();
 
     match current_tile {
         Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
@@ -481,40 +453,40 @@ fn handle_player_movement(ui: &mut egui::Ui, game: &mut FoamGame) {
                 egui::Key::ArrowLeft,
             ] {
                 if input.key_pressed(key) {
-                    game.recent_keys.push(key);
-                    if game.recent_keys.len() > 2 {
-                        game.recent_keys.remove(0); // Keep only last two
+                    recent_keys.push(key);
+                    if recent_keys.len() > 2 {
+                        recent_keys.remove(0); // Keep only last two
                     }
                 }
             }
 
-            if game.recent_keys.len() == 2 {
+            if recent_keys.len() == 2 {
                 use egui::Key::*;
-                let (a, b) = (game.recent_keys[0], game.recent_keys[1]);
+                let (a, b) = (recent_keys[0], recent_keys[1]);
 
                 if ui.input(|i| i.key_down(egui::Key::Space)) {
                     match (a, b) {
                         (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) if directions.up_right => {
                             new_pos.0 -= 2;
                             new_pos.1 += 2; // Move up-right
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown)
                             if directions.down_right =>
                         {
                             new_pos.0 += 2;
                             new_pos.1 += 2; // Move down-right
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) if directions.down_left => {
                             new_pos.0 += 2;
                             new_pos.1 -= 2; // Move down-left
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) if directions.up_left => {
                             new_pos.0 -= 2;
                             new_pos.1 -= 2; // Move up-left
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         _ => {}
                     }
@@ -523,24 +495,24 @@ fn handle_player_movement(ui: &mut egui::Ui, game: &mut FoamGame) {
                         (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) if directions.up_right => {
                             new_pos.0 -= 1;
                             new_pos.1 += 1; // Move up-right
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown)
                             if directions.down_right =>
                         {
                             new_pos.0 += 1;
                             new_pos.1 += 1; // Move down-right
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) if directions.down_left => {
                             new_pos.0 += 1;
                             new_pos.1 -= 1; // Move down-left
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) if directions.up_left => {
                             new_pos.0 -= 1;
                             new_pos.1 -= 1; // Move up-left
-                            game.recent_keys.clear();
+                            recent_keys.clear();
                         }
                         _ => {}
                     }
@@ -617,7 +589,7 @@ fn display_playing_board(ui: &mut egui::Ui, game: &mut FoamGame) {
                         // Draw the tile and get its response
                         let response = draw_tile(
                             game,
-                            &game.playing_board[row][col].clone(),
+                            game.editing_board.get_tile(row, col).unwrap(),
                             ui,
                             game.player_pos == (row, col),
                         );
