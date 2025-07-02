@@ -392,12 +392,20 @@ fn display_editing_menu(ui: &mut egui::Ui, game: &mut FoamGame) {
 fn play_screen(ui: &mut egui::Ui, game: &mut FoamGame) {
     ui.label("Playing Mode");
 
-    display_playing_board(ui, game);
+    let board_size = game.board_size;
+    let board = game.playing_board.as_mut().unwrap();
+    let recent_keys = &mut game.recent_keys;
+    let game_mode = &mut game.mode;
 
-    handle_player_movement(ui, game);
+    display_playing_board(ui, board, board_size);
+
+    if handle_player_movement(ui, board, recent_keys) {
+        *game_mode = GameMode::Editing;
+    }
 }
 
-fn handle_player_movement(ui: &mut egui::Ui, board: &mut PlayingBoard, recent_keys: &mut Vec<egui::Key>) {
+// return true if game end
+fn handle_player_movement(ui: &mut egui::Ui, board: &mut PlayingBoard, recent_keys: &mut Vec<egui::Key>) -> bool {
     // If moving from a cloud tile, remove it
     if matches!(
         board.previous_tile(),
@@ -553,25 +561,19 @@ fn handle_player_movement(ui: &mut egui::Ui, board: &mut PlayingBoard, recent_ke
     }
 
     // Check if new position is valid
-    if new_pos.0 >= 0
-        && new_pos.0 < game.board_size.1 as isize
-        && new_pos.1 >= 0
-        && new_pos.1 < game.board_size.0 as isize
-    {
+    if board.pos_is_valid(new_pos.0, new_pos.1) {
         // if at end space, end the game
-        if matches!(
-            game.playing_board[new_pos.0 as usize][new_pos.1 as usize],
-            Tile::EndSpace
-        ) {
-            game.mode = GameMode::Editing;
+        if board.pos_is_end_square(new_pos.0, new_pos.1) {
+            ui.label("You win!");
+            return true;
         }
 
-        game.previous_player_pos = game.player_pos; // Store previous position for movement logic
-        game.player_pos = (new_pos.0 as usize, new_pos.1 as usize);
+        board.advance_player_position(new_pos);
     }
+    false
 }
 
-fn display_playing_board(ui: &mut egui::Ui, game: &mut FoamGame) {
+fn display_playing_board(ui: &mut egui::Ui, board: &mut PlayingBoard, board_size: (usize, usize)) {
     ui.vertical(|ui| {
         if ui.button("Switch to Editing Mode").clicked() {
             game.mode = GameMode::Editing;
@@ -584,14 +586,14 @@ fn display_playing_board(ui: &mut egui::Ui, game: &mut FoamGame) {
             .spacing([1.0, 1.0])
             .min_col_width(0.0)
             .show(ui, |ui| {
-                for row in 0..game.board_size.1 {
-                    for col in 0..game.board_size.0 {
+                for row in 0..board_size.1 {
+                    for col in 0..board_size.0 {
                         // Draw the tile and get its response
                         let response = draw_tile(
                             game,
-                            game.editing_board.get_tile(row, col).unwrap(),
+                            board.get_tile(row, col).unwrap(),
                             ui,
-                            game.player_pos == (row, col),
+                            board.get_player_position() == (row, col),
                         );
                         if response.clicked() {
                             // Handle logic later

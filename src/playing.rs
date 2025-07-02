@@ -44,6 +44,14 @@ impl PlayingBoard {
         (self.player_pos.0 as isize, self.player_pos.1 as isize)
     }
 
+    pub fn get_tile(&self, x: usize, y: usize) -> Option<&Tile> {
+        if x < self.board_size.0 && y < self.board_size.1 {
+            Some(&self.playing_board[x][y])
+        } else {
+            None
+        }
+    }
+
     pub fn current_tile(&self) -> &Tile {
         &self.playing_board[self.player_pos.0][self.player_pos.1]
     }
@@ -58,5 +66,18 @@ impl PlayingBoard {
 
     pub fn set_previous_tile(&mut self, tile: Tile) {
         self.playing_board[self.previous_player_pos.0][self.previous_player_pos.1] = tile;
+    }
+
+    pub fn pos_is_valid(&self, x: isize, y: isize) -> bool {
+        x < self.board_size.0 as isize && y < self.board_size.1 as isize
+    }
+
+    pub fn pos_is_end_square(&self, x: isize, y: isize) -> bool {
+        (x, y) == (self.end_pos.0 as isize, self.end_pos.1 as isize)
+    }
+
+    pub fn advance_player_position(&mut self, new_pos: (isize, isize)) {
+        self.previous_player_pos = self.player_pos;
+        self.player_pos = (new_pos.0 as usize, new_pos.1 as usize);
     }
 }
