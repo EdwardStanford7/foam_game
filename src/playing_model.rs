@@ -2,7 +2,7 @@
 //! Logic for editing and playing the game
 //!
 
-use crate::editing_model;
+use crate::{editing_model, game_ui::DirectionKeyWithJump};
 
 use super::tile::{ALL_TILES, Tile};
 
@@ -28,7 +28,7 @@ impl PlayingModel {
         }
     }
 
-    pub fn handle_player_movement(&mut self, recent_keys: &[egui::Key]) {}
+    pub fn handle_player_movement(&mut self, recent_keys: &DirectionKeyWithJump) {}
 }
 
 /*

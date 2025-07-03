@@ -26,7 +26,12 @@ pub struct App {
     selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
     board_size: (usize, usize),
 
-    recent_keys: Vec<egui::Key>,
+    /// Keys pending in the last key window buffer
+    pending_keys: Vec<egui::Key>,
+    /// Completed window of keys pressed
+    recent_keys: Vec<egui::Key>, // Keys that have been processed and are
+    /// Time that last keypress window was opened
+    last_keyboard_window: f64, // Last time the keyboard window was updated
 }
 
 lazy_static::lazy_static! {
@@ -73,20 +78,211 @@ impl Default for App {
             selected_type: Tile::Empty,
             selected_tile_pos: None,
             board_size: (0, 0),
+            pending_keys: Vec::new(),
             recent_keys: Vec::new(),
+            last_keyboard_window: 0.0, // Initialize last keyboard window time
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| match self.mode {
-            AppMode::Startup => startup_screen(ui, self),
-            AppMode::Editing => editing_screen(ui, self),
-            AppMode::Playing => play_screen(ui, self),
+        egui::CentralPanel::default().show(ctx, |ui| {
+            update_recent_keys(ui, self);
+            match self.mode {
+                AppMode::Startup => startup_screen(ui, self),
+                AppMode::Editing => editing_screen(ui, self),
+                AppMode::Playing => play_screen(ui, self),
+            }
         });
     }
 }
+
+/*
+    Key enum & key logic
+*/
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DirectionKey {
+    Up,
+    Right,
+    Down,
+    Left,
+    UpRight,
+    DownRight,
+    DownLeft,
+    UpLeft,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DirectionKeyWithJump {
+    pub direction: DirectionKey,
+    pub jump: bool, // Whether a jump key was pressed
+}
+
+// fn direction_key_from_egui_key(key: egui::Key) -> Option<DirectionKey> {
+//     match key {
+//         egui::Key::ArrowUp => Some(DirectionKey::Up),
+//         egui::Key::ArrowRight => Some(DirectionKey::Right),
+//         egui::Key::ArrowDown => Some(DirectionKey::Down),
+//         egui::Key::ArrowLeft => Some(DirectionKey::Left),
+//         _ => None,
+//     }
+// }
+
+pub fn direction_key_from_bools(
+    up: bool,
+    right: bool,
+    down: bool,
+    left: bool,
+    jump: bool,
+) -> Option<DirectionKeyWithJump> {
+    let direction = match (up, right, down, left) {
+        (true, false, false, false) => Some(DirectionKey::Up),
+        (false, true, false, false) => Some(DirectionKey::Right),
+        (false, false, true, false) => Some(DirectionKey::Down),
+        (false, false, false, true) => Some(DirectionKey::Left),
+        (true, true, false, false) => Some(DirectionKey::UpRight),
+        (false, true, true, false) => Some(DirectionKey::DownRight),
+        (false, false, true, true) => Some(DirectionKey::DownLeft),
+        (true, false, false, true) => Some(DirectionKey::UpLeft),
+        _ => {
+            eprintln!(
+                "warning: invalid key combination: up={}, right={}, down={}, left={}",
+                up, right, down, left
+            );
+            None
+        }
+    }?;
+
+    Some(DirectionKeyWithJump { direction, jump })
+}
+
+pub fn direction_key_into_bools(keypress: &DirectionKeyWithJump) -> (bool, bool, bool, bool, bool) {
+    let mut up = false;
+    let mut right = false;
+    let mut down = false;
+    let mut left = false;
+
+    match keypress.direction {
+        DirectionKey::Up => up = true,
+        DirectionKey::Right => right = true,
+        DirectionKey::Down => down = true,
+        DirectionKey::Left => left = true,
+        DirectionKey::UpRight => {
+            up = true;
+            right = true;
+        }
+        DirectionKey::DownRight => {
+            down = true;
+            right = true;
+        }
+        DirectionKey::DownLeft => {
+            down = true;
+            left = true;
+        }
+        DirectionKey::UpLeft => {
+            up = true;
+            left = true;
+        }
+    }
+
+    let jump = keypress.jump;
+
+    (up, right, down, left, jump)
+}
+
+pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWithJump> {
+    let mut jump = false;
+    let mut up = false;
+    let mut right = false;
+    let mut down = false;
+    let mut left = false;
+
+    for &key in keys {
+        match key {
+            egui::Key::ArrowUp => up = true,
+            egui::Key::ArrowRight => right = true,
+            egui::Key::ArrowDown => down = true,
+            egui::Key::ArrowLeft => left = true,
+            egui::Key::Space => jump = true, // Space key indicates a jump
+            _ => {
+                // Ignore other keys
+                eprintln!("warning: unrecognized key: {:?}", key);
+                continue;
+            }
+        }
+    }
+
+    direction_key_from_bools(up, right, down, left, jump)
+}
+
+impl App {
+    /// Get keys pressed (with exactly-once semantics, clearing them)
+    /// Returns Some(nonempty vec) or None
+    pub fn get_keys_pressed(&mut self) -> Option<DirectionKeyWithJump> {
+        let result = std::mem::take(&mut self.recent_keys);
+        direction_key_from_egui_keys(&result)
+    }
+}
+
+const KEY_WINDOW_BUFFER_SECS: f64 = 0.1;
+
+/// Get keyboard input from egui and load it into recent_keys
+fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
+    println!("Updating recent keys");
+    // Add any new key presses this frame
+    ui.input(|i| {
+        println!("Input events: {:?}", i.events);
+
+        for key in [
+            egui::Key::ArrowUp,
+            egui::Key::ArrowRight,
+            egui::Key::ArrowDown,
+            egui::Key::ArrowLeft,
+        ] {
+            if i.key_pressed(key) {
+                println!("Key pressed: {:?}", key);
+                if app.pending_keys.is_empty() {
+                    app.last_keyboard_window = i.time;
+                }
+                app.pending_keys.push(key);
+            }
+        }
+
+        // for event in &i.events {
+        //     println!("Event: {:?}", event);
+        //     if let egui::Event::Key {
+        //         key,
+        //         pressed: true,
+        //         repeat: false,
+        //         ..
+        //     } = event
+        //     {
+        //         println!("Key pending: {:?}", key);
+        //         if app.pending_keys.is_empty() {
+        //             app.last_keyboard_window = ui.input(|i| i.time);
+        //         }
+        //         app.pending_keys.push(*key);
+        //         // app.pending_keys.truncate(3);
+        //     }
+        // }
+    });
+
+    // eprintln!("Pending keys: {:?}", app.pending_keys);
+
+    if !app.pending_keys.is_empty()
+        && app.recent_keys.is_empty()
+        && ui.input(|i| i.time) - app.last_keyboard_window > KEY_WINDOW_BUFFER_SECS
+    {
+        eprintln!("Recent keys: {:?}", app.pending_keys);
+        std::mem::swap(&mut app.recent_keys, &mut app.pending_keys);
+    }
+}
+
+/*
+    Draw tile
+*/
 
 fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
     let (rect, response) =
@@ -170,25 +366,6 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
     response.on_hover_text(tile.explanation())
 }
 
-fn get_keyboard_input(ui: &mut egui::Ui, app: &mut App) {
-    // Only collect keys that were just pressed this frame
-    ui.input(|i| {
-        for event in &i.events {
-            if let egui::Event::Key {
-                key,
-                pressed: true,
-                repeat: false,
-                ..
-            } = event
-            {
-                app.recent_keys.push(*key);
-            }
-        }
-    });
-
-    app.recent_keys.truncate(3);
-}
-
 /*
     Startup mode
 */
@@ -256,10 +433,10 @@ fn editing_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.add_space(25.0);
     display_editing_board(ui, app);
 
-    get_keyboard_input(ui, app);
-    if app.recent_keys.len() == 3 {
-        app.editing_model
-            .edit_tile(app.selected_tile_pos.unwrap(), &app.recent_keys);
+    if let Some(keypress) = app.get_keys_pressed() {
+        if let Some(selected_tile_pos) = app.selected_tile_pos {
+            app.editing_model.edit_tile(selected_tile_pos, &keypress);
+        }
     }
 }
 
@@ -276,14 +453,14 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             }
             if ui.button("Save Board").clicked() {
                 let file_name = open_file_dialog(ui);
-                if file_name.is_ok() {
-                    app.editing_model.save_board(file_name.unwrap().as_str());
+                if let Ok(file_name) = file_name {
+                    let _ = app.editing_model.save_board(file_name.as_str());
                 }
             }
             if ui.button("Load Board").clicked() {
                 let file_name = open_file_dialog(ui);
-                if file_name.is_ok() {
-                    let model = EditingModel::load_board(file_name.unwrap().as_str());
+                if let Ok(file_name) = file_name {
+                    let model = EditingModel::load_board(file_name.as_str());
                     if model.is_ok() {
                         app.editing_model = model.unwrap();
                         app.board_size = app.editing_model.get_board_size();
@@ -343,9 +520,9 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
         });
     }
 
-    if edited_pos.is_some() {
+    if let Some(edited_pos) = edited_pos {
         app.editing_model
-            .set_tile(edited_pos.unwrap(), app.selected_type.clone());
+            .set_tile(edited_pos, app.selected_type.clone());
     }
 }
 
@@ -357,9 +534,8 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.label("Playing Mode");
     display_playing_board(ui, app);
 
-    get_keyboard_input(ui, app);
-    if !app.recent_keys.is_empty() {
-        app.playing_model.handle_player_movement(&app.recent_keys);
+    if let Some(keypress) = app.get_keys_pressed() {
+        app.playing_model.handle_player_movement(&keypress);
     }
 }
 

@@ -1,6 +1,8 @@
 use super::tile::Tile;
 use serde::{Deserialize, Serialize};
 
+use super::game_ui::{self, DirectionKeyWithJump};
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EditingModel {
     board: Vec<Vec<Tile>>,             // rows then columns
@@ -72,61 +74,54 @@ impl EditingModel {
         self.board[pos.0][pos.1] = tile;
     }
 
-    pub fn edit_tile(&mut self, pos: (usize, usize), keys: &[egui::Key]) {
+    pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &DirectionKeyWithJump) {
+        let (key_up, key_right, key_down, key_left, _) =
+            game_ui::direction_key_into_bools(keypress);
         if let Some(tile) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
             match tile {
                 Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
-                    for (key, direction) in [
-                        (egui::Key::ArrowUp, &mut directions.up),
-                        (egui::Key::ArrowDown, &mut directions.down),
-                        (egui::Key::ArrowLeft, &mut directions.left),
-                        (egui::Key::ArrowRight, &mut directions.right),
+                    for (key_pressed, direction) in [
+                        (key_up, &mut directions.up),
+                        (key_down, &mut directions.down),
+                        (key_left, &mut directions.left),
+                        (key_right, &mut directions.right),
                     ] {
-                        if keys.contains(&key) {
+                        if key_pressed {
                             *direction = !*direction;
                         }
                     }
                 }
                 Tile::MoveDiagonal(dirs) => {
-                    let diagonals = [
-                        (
-                            (egui::Key::ArrowUp, egui::Key::ArrowRight),
-                            &mut dirs.up_right,
-                        ),
-                        (
-                            (egui::Key::ArrowRight, egui::Key::ArrowDown),
-                            &mut dirs.down_right,
-                        ),
-                        (
-                            (egui::Key::ArrowDown, egui::Key::ArrowLeft),
-                            &mut dirs.down_left,
-                        ),
-                        (
-                            (egui::Key::ArrowLeft, egui::Key::ArrowUp),
-                            &mut dirs.up_left,
-                        ),
-                    ];
-                    for ((k1, k2), dir) in diagonals {
-                        if keys.contains(&k1) && keys.contains(&k2) {
-                            *dir = !*dir;
-                        }
+                    let diagonal = if key_up && key_right {
+                        Some(&mut dirs.up_right)
+                    } else if key_down && key_right {
+                        Some(&mut dirs.down_right)
+                    } else if key_down && key_left {
+                        Some(&mut dirs.down_left)
+                    } else if key_up && key_left {
+                        Some(&mut dirs.up_left)
+                    } else {
+                        None
+                    };
+                    if let Some(dir) = diagonal {
+                        *dir = !*dir;
                     }
                 }
                 Tile::Bounce(val) => {
-                    if keys.contains(&egui::Key::ArrowUp) && *val < 1 {
+                    if key_up && *val < 1 {
                         *val += 1;
-                    } else if keys.contains(&egui::Key::ArrowDown) && *val > -1 {
+                    } else if key_down && *val > -1 {
                         *val -= 1;
                     }
                 }
                 Tile::Portal(c) => {
-                    if keys.contains(&egui::Key::ArrowUp) {
+                    if key_up {
                         *c = match *c {
                             'A'..='Y' => (*c as u8 + 1) as char,
                             'Z' => 'A',
                             _ => 'A',
                         };
-                    } else if keys.contains(&egui::Key::ArrowDown) {
+                    } else if key_down {
                         *c = match *c {
                             'B'..='Z' => (*c as u8 - 1) as char,
                             'A' => 'Z',
