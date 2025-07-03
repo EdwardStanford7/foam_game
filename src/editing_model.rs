@@ -31,9 +31,9 @@ impl EditingModel {
     }
 
     pub fn save_board(&self, file: &str) -> Result<(), String> {
-        let board_data = serde_json::to_string(&self.board)
+        let model_data = serde_json::to_string(&self)
             .map_err(|err| format!("Error serializing board data: {}", err))?;
-        std::fs::write(file, board_data)
+        std::fs::write(file, model_data)
             .map_err(|err| format!("Error writing board file: {}", err))?;
         Ok(())
     }
@@ -62,10 +62,6 @@ impl EditingModel {
 
     pub fn get_start_pos(&self) -> Option<(usize, usize)> {
         self.start_pos
-    }
-
-    pub fn get_end_pos(&self) -> Option<(usize, usize)> {
-        self.end_pos
     }
 
     pub fn set_tile(&mut self, pos: (usize, usize), tile: Tile) {

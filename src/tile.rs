@@ -2,6 +2,8 @@
 //! Game board tiles.
 //!
 
+use crate::game_ui::DirectionKey;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct CardinalDirectionsAllowed {
     pub up: bool,
@@ -132,6 +134,36 @@ impl Tile {
             | Tile::Wall
             | Tile::StartSpace
             | Tile::EndSpace => true,
+        }
+    }
+
+    pub fn can_move_in_direction(&self, direction: &DirectionKey) -> bool {
+        match self {
+            Tile::MoveCardinal(directions) => match direction {
+                DirectionKey::Up => directions.up,
+                DirectionKey::Right => directions.right,
+                DirectionKey::Down => directions.down,
+                DirectionKey::Left => directions.left,
+                _ => false,
+            },
+            Tile::Cloud(directions) => match direction {
+                DirectionKey::Up => directions.up,
+                DirectionKey::Right => directions.right,
+                DirectionKey::Down => directions.down,
+                DirectionKey::Left => directions.left,
+                _ => false,
+            },
+            Tile::MoveDiagonal(directions) => match direction {
+                DirectionKey::UpRight => directions.up_right,
+                DirectionKey::DownRight => directions.down_right,
+                DirectionKey::DownLeft => directions.down_left,
+                DirectionKey::UpLeft => directions.up_left,
+                _ => false,
+            },
+            _ => matches!(
+                direction,
+                DirectionKey::Up | DirectionKey::Right | DirectionKey::Down | DirectionKey::Left
+            ), // Other tiles allow movement in any cardinal direction
         }
     }
 }

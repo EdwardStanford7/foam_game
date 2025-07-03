@@ -2,208 +2,165 @@
 //! Logic for editing and playing the game
 //!
 
-use crate::{editing_model, game_ui::DirectionKeyWithJump};
-
-use super::tile::{ALL_TILES, Tile};
+use super::tile::Tile;
+use crate::{editing_model, game_ui::DirectionKey, game_ui::DirectionKeyWithJump};
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayingModel {
     board: Vec<Vec<Tile>>,
-    player_pos: (usize, usize),          // position of the player
-    previous_player_pos: (usize, usize), // previous position of the player for movement logic
-    end_pos: (usize, usize),             // position of unique end tile
+    board_size: (usize, usize), // size of the board, including padding
+    player_pos: (usize, usize), // position of the player
 }
 
 impl PlayingModel {
     pub fn new(editing_model: &editing_model::EditingModel) -> Self {
-        let board = editing_model.get_board().clone();
-        let player_pos = editing_model.get_start_pos().unwrap(); // Default to (0, 0) if no start position
-        let end_pos = editing_model.get_end_pos().unwrap(); // Default to (0, 0) if no end position
+        let board_size = (
+            editing_model.get_board_size().0 + 2,
+            editing_model.get_board_size().1 + 2,
+        );
+
+        // pad board with layer of empty tiles on outside
+        let mut board = vec![vec![Tile::Empty; board_size.0]; board_size.1];
+        for (i, row) in editing_model.get_board().iter().enumerate() {
+            for (j, tile) in row.iter().enumerate() {
+                board[i + 1][j + 1] = tile.clone(); // offset by 1 to account for padding
+            }
+        }
+
+        let player_pos = (
+            editing_model.get_start_pos().unwrap().0 + 1, // offset by 1 to account for padding
+            editing_model.get_start_pos().unwrap().1 + 1,
+        ); // offset by 1 to account for padding
 
         PlayingModel {
             board,
+            board_size,
             player_pos,
-            previous_player_pos: player_pos,
-            end_pos,
         }
     }
 
-    pub fn handle_player_movement(&mut self, recent_keys: &DirectionKeyWithJump) {}
-}
-
-/*
-
-fn handle_player_movement(ui: &mut egui::Ui, game: &mut App) {
-    // If moving from a cloud tile, remove it
-    if matches!(
-        game.playing_board[game.previous_player_pos.0][game.previous_player_pos.1],
-        Tile::Cloud(_)
-    ) && game.previous_player_pos != game.player_pos
-    {
-        game.playing_board[game.previous_player_pos.0][game.previous_player_pos.1] = Tile::Empty;
+    pub fn get_board(&self) -> &Vec<Vec<Tile>> {
+        &self.board
     }
 
-    let current_tile = &game.playing_board[game.player_pos.0][game.player_pos.1];
-    let mut new_pos: (isize, isize) = (game.player_pos.0 as isize, game.player_pos.1 as isize);
+    pub fn get_player_pos(&self) -> (usize, usize) {
+        self.player_pos
+    }
 
-    match current_tile {
-        Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
-            if ui.input(|i| i.key_down(egui::Key::Space)) {
-                // Handle cardinal movement based on allowed directions
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp) && directions.up) {
-                    new_pos.0 -= 2; // Move up
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown) && directions.down) {
-                    new_pos.0 += 2; // Move down
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft) && directions.left) {
-                    new_pos.1 -= 2; // Move left
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowRight) && directions.right) {
-                    new_pos.1 += 2; // Move right
-                }
-            } else {
-                // Handle cardinal movement based on allowed directions
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp) && directions.up) {
-                    new_pos.0 -= 1; // Move up
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown) && directions.down) {
-                    new_pos.0 += 1; // Move down
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft) && directions.left) {
-                    new_pos.1 -= 1; // Move left
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowRight) && directions.right) {
-                    new_pos.1 += 1; // Move right
-                }
-            }
-        }
-        Tile::MoveDiagonal(directions) => {
-            // Handle diagonal movement based on allowed directions
-            let input = ui.input(|i| i.clone());
+    // Moves the player and returns true if the game is over
+    pub fn handle_player_movement(&mut self, movement: &mut DirectionKeyWithJump) -> bool {
+        let mut current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
+        let mut old_pos = self.player_pos;
 
-            for key in [
-                egui::Key::ArrowUp,
-                egui::Key::ArrowRight,
-                egui::Key::ArrowDown,
-                egui::Key::ArrowLeft,
-            ] {
-                if input.key_pressed(key) {
-                    game.recent_keys.push(key);
-                    if game.recent_keys.len() > 2 {
-                        game.recent_keys.remove(0); // Keep only last two
+        println!(
+            "Handling player movement: {:?} at position: {:?}",
+            movement, self.player_pos
+        );
+
+        while !matches!(current_tile, Tile::Empty) {
+            match movement.direction {
+                DirectionKey::Up => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(movement.move_speed);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::Right => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.1 =
+                            (self.player_pos.1 + movement.move_speed).min(self.board_size.1 - 1);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::Down => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + movement.move_speed).min(self.board_size.0 - 1);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::Left => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::UpRight => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(movement.move_speed);
+                        self.player_pos.1 = (self.player_pos.1 + 1 + movement.move_speed)
+                            .min(self.board_size.1 - 1);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::DownRight => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + movement.move_speed).min(self.board_size.0 - 1);
+                        self.player_pos.1 =
+                            (self.player_pos.1 + movement.move_speed).min(self.board_size.1 - 1);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::DownLeft => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + movement.move_speed).min(self.board_size.0 - 1);
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
+                    } else {
+                        break; // Can't move further
+                    }
+                }
+                DirectionKey::UpLeft => {
+                    if current_tile.can_move_in_direction(&movement.direction) {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(movement.move_speed);
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
+                    } else {
+                        break; // Can't move further
                     }
                 }
             }
 
-            if game.recent_keys.len() == 2 {
-                use egui::Key::*;
-                let (a, b) = (game.recent_keys[0], game.recent_keys[1]);
+            // No movement occurred
+            if self.player_pos == old_pos {
+                return false;
+            }
 
-                if ui.input(|i| i.key_down(egui::Key::Space)) {
-                    match (a, b) {
-                        (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) if directions.up_right => {
-                            new_pos.0 -= 2;
-                            new_pos.1 += 2; // Move up-right
-                            game.recent_keys.clear();
-                        }
-                        (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown)
-                            if directions.down_right =>
-                        {
-                            new_pos.0 += 2;
-                            new_pos.1 += 2; // Move down-right
-                            game.recent_keys.clear();
-                        }
-                        (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) if directions.down_left => {
-                            new_pos.0 += 2;
-                            new_pos.1 -= 2; // Move down-left
-                            game.recent_keys.clear();
-                        }
-                        (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) if directions.up_left => {
-                            new_pos.0 -= 2;
-                            new_pos.1 -= 2; // Move up-left
-                            game.recent_keys.clear();
-                        }
-                        _ => {}
-                    }
-                } else {
-                    match (a, b) {
-                        (ArrowUp, ArrowRight) | (ArrowRight, ArrowUp) if directions.up_right => {
-                            new_pos.0 -= 1;
-                            new_pos.1 += 1; // Move up-right
-                            game.recent_keys.clear();
-                        }
-                        (ArrowDown, ArrowRight) | (ArrowRight, ArrowDown)
-                            if directions.down_right =>
-                        {
-                            new_pos.0 += 1;
-                            new_pos.1 += 1; // Move down-right
-                            game.recent_keys.clear();
-                        }
-                        (ArrowDown, ArrowLeft) | (ArrowLeft, ArrowDown) if directions.down_left => {
-                            new_pos.0 += 1;
-                            new_pos.1 -= 1; // Move down-left
-                            game.recent_keys.clear();
-                        }
-                        (ArrowUp, ArrowLeft) | (ArrowLeft, ArrowUp) if directions.up_left => {
-                            new_pos.0 -= 1;
-                            new_pos.1 -= 1; // Move up-left
-                            game.recent_keys.clear();
-                        }
-                        _ => {}
-                    }
+            // If the current tile is a cloud, remove it
+            if matches!(current_tile, Tile::Cloud(_)) {
+                self.board[self.player_pos.0][self.player_pos.1] = Tile::Empty;
+            }
+
+            // Update the current tile to the new tile
+            current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
+            old_pos = self.player_pos;
+
+            match current_tile {
+                Tile::EndSpace => {
+                    return true; // Player reached the end tile
+                }
+                Tile::Bounce(amount) => {
+                    movement.move_speed =
+                        movement.move_speed.checked_add_signed(amount).unwrap_or(0);
+                }
+                Tile::Ice => movement.move_speed = 1,
+                _ => {
+                    movement.move_speed = 0; // Reset move speed for non-movement tiles
                 }
             }
-        }
-        _ => {
-            if ui.input(|i| i.key_down(egui::Key::Space)) {
-                // Handle cardinal movement based on allowed directions
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                    new_pos.0 -= 2; // Move up
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                    new_pos.0 += 2; // Move down
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                    new_pos.1 -= 2; // Move left
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                    new_pos.1 += 2; // Move right
-                }
-            } else {
-                // Handle cardinal movement based on allowed directions
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                    new_pos.0 -= 1; // Move up
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                    new_pos.0 += 1; // Move down
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                    new_pos.1 -= 1; // Move left
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                    new_pos.1 += 1; // Move right
-                }
-            }
-        }
-    }
 
-    // Check if new position is valid
-    if new_pos.0 >= 0
-        && new_pos.0 < game.board_size.1 as isize
-        && new_pos.1 >= 0
-        && new_pos.1 < game.board_size.0 as isize
-    {
-        // if at end space, end the game
-        if matches!(
-            game.playing_board[new_pos.0 as usize][new_pos.1 as usize],
-            Tile::EndSpace
-        ) {
-            game.mode = GameMode::Editing;
+            println!(
+                "Player moved to position: {:?}, current tile: {:?}",
+                self.player_pos, current_tile
+            );
         }
 
-        game.previous_player_pos = game.player_pos; // Store previous position for movement logic
-        game.player_pos = (new_pos.0 as usize, new_pos.1 as usize);
+        true
     }
 }
- */

@@ -24,7 +24,8 @@ pub struct App {
     mode: AppMode,
     selected_type: Tile,
     selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
-    board_size: (usize, usize),
+    width_slider: usize,                       // Width slider for board size
+    height_slider: usize,                      // Height slider for board size
 
     /// Keys pending in the last key window buffer
     pending_keys: Vec<egui::Key>,
@@ -77,7 +78,8 @@ impl Default for App {
             mode: AppMode::Startup,
             selected_type: Tile::Empty,
             selected_tile_pos: None,
-            board_size: (0, 0),
+            width_slider: 0,
+            height_slider: 0,
             pending_keys: Vec::new(),
             recent_keys: Vec::new(),
             last_keyboard_window: 0.0, // Initialize last keyboard window time
@@ -117,25 +119,15 @@ pub enum DirectionKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DirectionKeyWithJump {
     pub direction: DirectionKey,
-    pub jump: bool, // Whether a jump key was pressed
+    pub move_speed: usize, // Number of tiles to move in the given direction
 }
-
-// fn direction_key_from_egui_key(key: egui::Key) -> Option<DirectionKey> {
-//     match key {
-//         egui::Key::ArrowUp => Some(DirectionKey::Up),
-//         egui::Key::ArrowRight => Some(DirectionKey::Right),
-//         egui::Key::ArrowDown => Some(DirectionKey::Down),
-//         egui::Key::ArrowLeft => Some(DirectionKey::Left),
-//         _ => None,
-//     }
-// }
 
 pub fn direction_key_from_bools(
     up: bool,
     right: bool,
     down: bool,
     left: bool,
-    jump: bool,
+    jump: usize,
 ) -> Option<DirectionKeyWithJump> {
     let direction = match (up, right, down, left) {
         (true, false, false, false) => Some(DirectionKey::Up),
@@ -149,10 +141,15 @@ pub fn direction_key_from_bools(
         _ => None,
     }?;
 
-    Some(DirectionKeyWithJump { direction, jump })
+    Some(DirectionKeyWithJump {
+        direction,
+        move_speed: jump,
+    })
 }
 
-pub fn direction_key_into_bools(keypress: &DirectionKeyWithJump) -> (bool, bool, bool, bool, bool) {
+pub fn direction_key_into_bools(
+    keypress: &DirectionKeyWithJump,
+) -> (bool, bool, bool, bool, usize) {
     let mut up = false;
     let mut right = false;
     let mut down = false;
@@ -181,13 +178,13 @@ pub fn direction_key_into_bools(keypress: &DirectionKeyWithJump) -> (bool, bool,
         }
     }
 
-    let jump = keypress.jump;
+    let move_speed = keypress.move_speed;
 
-    (up, right, down, left, jump)
+    (up, right, down, left, move_speed)
 }
 
 pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWithJump> {
-    let mut jump = false;
+    let mut move_speed = 1;
     let mut up = false;
     let mut right = false;
     let mut down = false;
@@ -199,7 +196,7 @@ pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWi
             egui::Key::ArrowRight => right = true,
             egui::Key::ArrowDown => down = true,
             egui::Key::ArrowLeft => left = true,
-            egui::Key::Space => jump = true, // Space key indicates a jump
+            egui::Key::Space => move_speed = 2, // Space key indicates a move speed of 2
             _ => {
                 // Ignore other keys
                 continue;
@@ -207,7 +204,7 @@ pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWi
         }
     }
 
-    direction_key_from_bools(up, right, down, left, jump)
+    direction_key_from_bools(up, right, down, left, move_speed)
 }
 
 impl App {
@@ -230,6 +227,7 @@ fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
             egui::Key::ArrowRight,
             egui::Key::ArrowDown,
             egui::Key::ArrowLeft,
+            egui::Key::Space, // Space for jump
         ] {
             if i.key_pressed(key) {
                 if app.pending_keys.is_empty() {
@@ -346,23 +344,23 @@ fn startup_screen(ui: &mut egui::Ui, app: &mut App) {
 
     ui.horizontal(|ui| {
         ui.label("Width:");
-        ui.add(egui::Slider::new(&mut app.board_size.0, 5..=40).integer());
+        ui.add(egui::Slider::new(&mut app.width_slider, 5..=40).integer());
     });
 
     ui.horizontal(|ui| {
         ui.label("Height:");
-        ui.add(egui::Slider::new(&mut app.board_size.1, 5..=20).integer());
+        ui.add(egui::Slider::new(&mut app.height_slider, 5..=20).integer());
     });
 
     if ui.button("Start Editing").clicked() {
         // Initialize the board with the selected size
-        app.editing_model = EditingModel::new(app.board_size);
+        app.editing_model = EditingModel::new((app.width_slider, app.height_slider));
         app.mode = AppMode::Editing;
     }
 
     if ui.button("Load Board").clicked() {
         // Load board from file
-        let filename = open_file_dialog(ui);
+        let filename = open_file_dialog(false);
         if filename.is_err() {
             return;
         }
@@ -371,24 +369,26 @@ fn startup_screen(ui: &mut egui::Ui, app: &mut App) {
 
         if model.is_ok() {
             app.editing_model = model.unwrap();
-            app.board_size = app.editing_model.get_board_size();
+            app.mode = AppMode::Editing;
         }
     }
 }
 
-fn open_file_dialog(ui: &mut egui::Ui) -> Result<String, String> {
-    // Open a file dialog to select a board file
-    if ui.button("Open Board File").clicked() {
-        let file_path = FileDialog::new()
-            .add_filter("Foam Game Board", &["fgb"])
-            .set_title("Save Board")
-            .show_save_single_file()
-            .ok()
-            .flatten()
-            .ok_or("No file selected".to_string())?;
-        return Ok(file_path.to_string_lossy().to_string());
-    }
-    Err("No file selected".to_string())
+fn open_file_dialog(is_save: bool) -> Result<String, String> {
+    let dialog = FileDialog::new().add_filter("Foam Game Board", &["fgb"]);
+
+    let file_path = if is_save {
+        dialog.set_title("Save Board").show_save_single_file()
+    } else {
+        dialog.set_title("Load Board").show_open_single_file()
+    };
+
+    Ok(file_path
+        .ok()
+        .flatten()
+        .ok_or("No file selected".to_string())?
+        .to_string_lossy()
+        .to_string())
 }
 
 /*
@@ -420,18 +420,17 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
                 app.playing_model = PlayingModel::new(&app.editing_model); // Initialize playing model
             }
             if ui.button("Save Board").clicked() {
-                let file_name = open_file_dialog(ui);
+                let file_name = open_file_dialog(true);
                 if let Ok(file_name) = file_name {
                     let _ = app.editing_model.save_board(file_name.as_str());
                 }
             }
             if ui.button("Load Board").clicked() {
-                let file_name = open_file_dialog(ui);
+                let file_name = open_file_dialog(false);
                 if let Ok(file_name) = file_name {
                     let model = EditingModel::load_board(file_name.as_str());
                     if model.is_ok() {
                         app.editing_model = model.unwrap();
-                        app.board_size = app.editing_model.get_board_size();
                     }
                 }
             }
@@ -456,37 +455,35 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
     let mut edited_pos = None;
 
     // Display the board
-    for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
-        // Iterate over each row of the board
-        ui.horizontal(|ui| {
-            for (col_idx, tile) in row.iter().enumerate() {
-                // Draw the tile and get its response
-                let response = draw_tile(tile, ui, false);
-                if response.clicked() {
-                    edited_pos = Some((row_idx, col_idx));
-                }
-                if response.hovered() {
-                    // Highlight the hovered tile
-                    ui.painter().rect_filled(
-                        response.rect,
+    egui::Grid::new("editing_board_grid")
+        .spacing(egui::vec2(2.0, 2.0))
+        .min_col_width(0.0)
+        .show(ui, |ui| {
+            for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
+                for (col_idx, tile) in row.iter().enumerate() {
+                    let response = draw_tile(tile, ui, false);
+                    if response.clicked() {
+                        edited_pos = Some((row_idx, col_idx));
+                    }
+                    if response.hovered() {
+                        ui.painter().rect_filled(
+                            response.rect,
+                            0.0,
+                            egui::Color32::from_black_alpha(100),
+                        );
+                        app.selected_tile_pos = Some((row_idx, col_idx));
+                    }
+                    let rect = response.rect;
+                    ui.painter().rect_stroke(
+                        rect,
                         0.0,
-                        egui::Color32::from_black_alpha(100),
+                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                        egui::StrokeKind::Outside,
                     );
-
-                    app.selected_tile_pos = Some((row_idx, col_idx));
                 }
-                // Draw faint white border around each cell
-                let rect = response.rect;
-                ui.painter().rect_stroke(
-                    rect,
-                    0.0,
-                    egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                    egui::StrokeKind::Outside,
-                );
+                ui.end_row();
             }
-            ui.end_row();
         });
-    }
 
     if let Some(edited_pos) = edited_pos {
         app.editing_model
@@ -502,8 +499,11 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.label("Playing Mode");
     display_playing_board(ui, app);
 
-    if let Some(keypress) = app.get_keys_pressed() {
-        app.playing_model.handle_player_movement(&keypress);
+    if let Some(mut keypress) = app.get_keys_pressed() {
+        if app.playing_model.handle_player_movement(&mut keypress) {
+            // Player reached the end tile
+            app.mode = AppMode::Editing;
+        }
     }
 }
 
@@ -515,22 +515,29 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
 
         ui.add_space(50.0);
 
-        // Display the board
-        for row in app.editing_model.get_board().iter() {
-            // Iterate over each row of the board
-            ui.horizontal(|ui| {
-                for tile in row.iter() {
-                    // Draw faint white border around each cell
-                    let rect = draw_tile(tile, ui, false).rect;
-                    ui.painter().rect_stroke(
-                        rect,
-                        0.0,
-                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                        egui::StrokeKind::Outside,
-                    );
+        // Display the board using a grid layout
+        egui::Grid::new("playing_board_grid")
+            .spacing(egui::vec2(2.0, 2.0))
+            .min_col_width(0.0)
+            .show(ui, |ui| {
+                for (row_idx, row) in app.playing_model.get_board().iter().enumerate() {
+                    for (col_idx, tile) in row.iter().enumerate() {
+                        // Draw faint white border around each cell
+                        let rect = draw_tile(
+                            tile,
+                            ui,
+                            (row_idx, col_idx) == app.playing_model.get_player_pos(),
+                        )
+                        .rect;
+                        ui.painter().rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    ui.end_row();
                 }
-                ui.end_row();
             });
-        }
     });
 }
