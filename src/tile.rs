@@ -111,4 +111,27 @@ impl Tile {
             Tile::EndSpace => "The end space for the puzzle completion.",
         }
     }
+
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
+                !(!directions.up && !directions.down && !directions.left && !directions.right)
+            }
+            Tile::MoveDiagonal(directions) => {
+                !(!directions.up_right
+                    && !directions.down_right
+                    && !directions.down_left
+                    && !directions.up_left)
+            }
+            Tile::Empty
+            | Tile::Bounce(_)
+            | Tile::Portal(_)
+            | Tile::Water
+            | Tile::Ice
+            | Tile::Door
+            | Tile::Wall
+            | Tile::StartSpace
+            | Tile::EndSpace => true,
+        }
+    }
 }

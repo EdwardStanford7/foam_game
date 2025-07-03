@@ -146,13 +146,7 @@ pub fn direction_key_from_bools(
         (false, true, true, false) => Some(DirectionKey::DownRight),
         (false, false, true, true) => Some(DirectionKey::DownLeft),
         (true, false, false, true) => Some(DirectionKey::UpLeft),
-        _ => {
-            eprintln!(
-                "warning: invalid key combination: up={}, right={}, down={}, left={}",
-                up, right, down, left
-            );
-            None
-        }
+        _ => None,
     }?;
 
     Some(DirectionKeyWithJump { direction, jump })
@@ -208,7 +202,6 @@ pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWi
             egui::Key::Space => jump = true, // Space key indicates a jump
             _ => {
                 // Ignore other keys
-                eprintln!("warning: unrecognized key: {:?}", key);
                 continue;
             }
         }
@@ -230,11 +223,8 @@ const KEY_WINDOW_BUFFER_SECS: f64 = 0.1;
 
 /// Get keyboard input from egui and load it into recent_keys
 fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
-    println!("Updating recent keys");
     // Add any new key presses this frame
     ui.input(|i| {
-        println!("Input events: {:?}", i.events);
-
         for key in [
             egui::Key::ArrowUp,
             egui::Key::ArrowRight,
@@ -242,40 +232,18 @@ fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
             egui::Key::ArrowLeft,
         ] {
             if i.key_pressed(key) {
-                println!("Key pressed: {:?}", key);
                 if app.pending_keys.is_empty() {
                     app.last_keyboard_window = i.time;
                 }
                 app.pending_keys.push(key);
             }
         }
-
-        // for event in &i.events {
-        //     println!("Event: {:?}", event);
-        //     if let egui::Event::Key {
-        //         key,
-        //         pressed: true,
-        //         repeat: false,
-        //         ..
-        //     } = event
-        //     {
-        //         println!("Key pending: {:?}", key);
-        //         if app.pending_keys.is_empty() {
-        //             app.last_keyboard_window = ui.input(|i| i.time);
-        //         }
-        //         app.pending_keys.push(*key);
-        //         // app.pending_keys.truncate(3);
-        //     }
-        // }
     });
-
-    // eprintln!("Pending keys: {:?}", app.pending_keys);
 
     if !app.pending_keys.is_empty()
         && app.recent_keys.is_empty()
         && ui.input(|i| i.time) - app.last_keyboard_window > KEY_WINDOW_BUFFER_SECS
     {
-        eprintln!("Recent keys: {:?}", app.pending_keys);
         std::mem::swap(&mut app.recent_keys, &mut app.pending_keys);
     }
 }

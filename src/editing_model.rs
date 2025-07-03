@@ -39,7 +39,17 @@ impl EditingModel {
     }
 
     pub fn board_is_playable(&self) -> bool {
-        self.start_pos.is_some() && self.end_pos.is_some() // TODO: teleports, doors, keys
+        if !(self.start_pos.is_some() && self.end_pos.is_some()) {
+            return false; // TODO: teleports, doors, keys
+        }
+
+        for tile in self.board.iter().flatten() {
+            if !tile.is_valid() {
+                return false; // Invalid tile found
+            }
+        }
+
+        true
     }
 
     pub fn get_board_size(&self) -> (usize, usize) {
@@ -80,31 +90,45 @@ impl EditingModel {
         if let Some(tile) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
             match tile {
                 Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
+                    let mut new_directions = directions.clone();
                     for (key_pressed, direction) in [
-                        (key_up, &mut directions.up),
-                        (key_down, &mut directions.down),
-                        (key_left, &mut directions.left),
-                        (key_right, &mut directions.right),
+                        (key_up, &mut new_directions.up),
+                        (key_down, &mut new_directions.down),
+                        (key_left, &mut new_directions.left),
+                        (key_right, &mut new_directions.right),
                     ] {
                         if key_pressed {
                             *direction = !*direction;
                         }
                     }
+                    let test_tile = match tile {
+                        Tile::MoveCardinal(_) => Tile::MoveCardinal(new_directions.clone()),
+                        Tile::Cloud(_) => Tile::Cloud(new_directions.clone()),
+                        _ => unreachable!(),
+                    };
+                    if test_tile.is_valid() {
+                        *tile = test_tile;
+                    }
                 }
                 Tile::MoveDiagonal(dirs) => {
+                    let mut new_dirs = dirs.clone();
                     let diagonal = if key_up && key_right {
-                        Some(&mut dirs.up_right)
+                        Some(&mut new_dirs.up_right)
                     } else if key_down && key_right {
-                        Some(&mut dirs.down_right)
+                        Some(&mut new_dirs.down_right)
                     } else if key_down && key_left {
-                        Some(&mut dirs.down_left)
+                        Some(&mut new_dirs.down_left)
                     } else if key_up && key_left {
-                        Some(&mut dirs.up_left)
+                        Some(&mut new_dirs.up_left)
                     } else {
                         None
                     };
                     if let Some(dir) = diagonal {
                         *dir = !*dir;
+                        let test_tile = Tile::MoveDiagonal(new_dirs.clone());
+                        if test_tile.is_valid() {
+                            *tile = test_tile;
+                        }
                     }
                 }
                 Tile::Bounce(val) => {
