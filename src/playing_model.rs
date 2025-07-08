@@ -3,7 +3,7 @@
 //!
 
 use super::tile::Tile;
-use crate::{editing_model, game_ui::DirectionKey, game_ui::DirectionKeyWithJump};
+use crate::{editing_model, game_ui::DirectionKey, game_ui::PlayerMovementData};
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayingModel {
@@ -48,7 +48,7 @@ impl PlayingModel {
     }
 
     // Moves the player and returns true if the game is over
-    pub fn handle_player_movement(&mut self, movement: &mut DirectionKeyWithJump) -> bool {
+    pub fn handle_player_movement(&mut self, movement: &mut PlayerMovementData) -> bool {
         let mut current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
         let mut old_pos = self.player_pos;
 
@@ -119,6 +119,16 @@ impl PlayingModel {
                     } else {
                         return false; // Can't move further
                     }
+                }
+                DirectionKey::None => {
+                    // If the current tile is a portal, teleport the player to the linked position
+                    if let Tile::Portal(_, pos) = current_tile {
+                        if movement.use_tile {
+                            self.player_pos.0 = pos.0 + 1; // offset by 1 to account for padding
+                            self.player_pos.1 = pos.1 + 1; // offset by 1 to account for padding
+                        }
+                    }
+                    return false; // No movement
                 }
             }
 

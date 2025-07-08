@@ -1,7 +1,7 @@
 use super::tile::Tile;
 use serde::{Deserialize, Serialize};
 
-use super::game_ui::{self, DirectionKeyWithJump};
+use super::game_ui::{self, PlayerMovementData};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EditingModel {
@@ -38,15 +38,39 @@ impl EditingModel {
         Ok(())
     }
 
-    pub fn board_is_playable(&self) -> bool {
+    pub fn board_is_playable(&mut self) -> bool {
         if !(self.start_pos.is_some() && self.end_pos.is_some()) {
-            return false; // TODO: teleports, doors, keys
+            return false;
         }
 
-        for tile in self.board.iter().flatten() {
-            if !tile.is_valid() {
-                return false; // Invalid tile found
+        let mut portal_positions = std::collections::HashMap::<char, Vec<(usize, usize)>>::new();
+
+        for (row_idx, row) in self.board.iter().enumerate() {
+            for (col_idx, tile) in row.iter().enumerate() {
+                if !tile.is_valid() {
+                    return false; // Invalid tile found
+                }
+
+                if let Tile::Portal(c, _) = tile {
+                    portal_positions
+                        .entry(*c)
+                        .or_default()
+                        .push((row_idx, col_idx));
+                }
             }
+        }
+
+        // Check that all portal letters appear exactly twice
+        for (_, positions) in portal_positions.iter() {
+            if positions.len() != 2 {
+                return false; // Portal letter appears more or less than twice
+            }
+        }
+
+        // Verify that portals are properly linked to each other
+        for (letter, positions) in portal_positions.iter() {
+            self.board[positions[0].0][positions[0].1] = Tile::Portal(*letter, positions[1]); // Link first portal to second
+            self.board[positions[1].0][positions[1].1] = Tile::Portal(*letter, positions[0]); // Link second portal to first
         }
 
         true
@@ -80,9 +104,9 @@ impl EditingModel {
         self.board[pos.0][pos.1] = tile;
     }
 
-    pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &DirectionKeyWithJump) {
-        let (key_up, key_right, key_down, key_left, _) =
-            game_ui::direction_key_into_bools(keypress);
+    pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &PlayerMovementData) {
+        let (key_up, key_right, key_down, key_left) =
+            game_ui::direction_key_into_bools(&keypress.direction);
         if let Some(tile) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
             match tile {
                 Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
@@ -134,7 +158,7 @@ impl EditingModel {
                         *val -= 1;
                     }
                 }
-                Tile::Portal(c) => {
+                Tile::Portal(c, _) => {
                     if key_up {
                         *c = match *c {
                             'A'..='Y' => (*c as u8 + 1) as char,

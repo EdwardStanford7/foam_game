@@ -114,48 +114,54 @@ pub enum DirectionKey {
     DownRight,
     DownLeft,
     UpLeft,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DirectionKeyWithJump {
+pub struct PlayerMovementData {
     pub direction: DirectionKey,
     pub move_speed: usize, // Number of tiles to move in the given direction
+    pub use_tile: bool,    // If current tile can be used (e.g. portal)
 }
 
-pub fn direction_key_from_bools(
+pub fn movement_data_from_bools(
     up: bool,
     right: bool,
     down: bool,
     left: bool,
-    jump: usize,
-) -> Option<DirectionKeyWithJump> {
+    move_speed: usize,
+    use_tile: bool,
+) -> Option<PlayerMovementData> {
     let direction = match (up, right, down, left) {
-        (true, false, false, false) => Some(DirectionKey::Up),
-        (false, true, false, false) => Some(DirectionKey::Right),
-        (false, false, true, false) => Some(DirectionKey::Down),
-        (false, false, false, true) => Some(DirectionKey::Left),
-        (true, true, false, false) => Some(DirectionKey::UpRight),
-        (false, true, true, false) => Some(DirectionKey::DownRight),
-        (false, false, true, true) => Some(DirectionKey::DownLeft),
-        (true, false, false, true) => Some(DirectionKey::UpLeft),
-        _ => None,
-    }?;
+        (true, false, false, false) => DirectionKey::Up,
+        (false, true, false, false) => DirectionKey::Right,
+        (false, false, true, false) => DirectionKey::Down,
+        (false, false, false, true) => DirectionKey::Left,
+        (true, true, false, false) => DirectionKey::UpRight,
+        (false, true, true, false) => DirectionKey::DownRight,
+        (false, false, true, true) => DirectionKey::DownLeft,
+        (true, false, false, true) => DirectionKey::UpLeft,
+        _ => DirectionKey::None,
+    };
 
-    Some(DirectionKeyWithJump {
+    if direction == DirectionKey::None && !use_tile {
+        return None; // No movement or tile usage
+    }
+
+    Some(PlayerMovementData {
         direction,
-        move_speed: jump,
+        move_speed,
+        use_tile,
     })
 }
 
-pub fn direction_key_into_bools(
-    keypress: &DirectionKeyWithJump,
-) -> (bool, bool, bool, bool, usize) {
+pub fn direction_key_into_bools(direction: &DirectionKey) -> (bool, bool, bool, bool) {
     let mut up = false;
     let mut right = false;
     let mut down = false;
     let mut left = false;
 
-    match keypress.direction {
+    match direction {
         DirectionKey::Up => up = true,
         DirectionKey::Right => right = true,
         DirectionKey::Down => down = true,
@@ -176,19 +182,19 @@ pub fn direction_key_into_bools(
             up = true;
             left = true;
         }
+        DirectionKey::None => {}
     }
 
-    let move_speed = keypress.move_speed;
-
-    (up, right, down, left, move_speed)
+    (up, right, down, left)
 }
 
-pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWithJump> {
+pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<PlayerMovementData> {
     let mut move_speed = 1;
     let mut up = false;
     let mut right = false;
     let mut down = false;
     let mut left = false;
+    let mut use_tile = false;
 
     for &key in keys {
         match key {
@@ -197,6 +203,7 @@ pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWi
             egui::Key::ArrowDown => down = true,
             egui::Key::ArrowLeft => left = true,
             egui::Key::Space => move_speed = 2, // Space key indicates a move speed of 2
+            egui::Key::Enter => use_tile = true, // Enter key indicates using the tile
             _ => {
                 // Ignore other keys
                 continue;
@@ -204,13 +211,13 @@ pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<DirectionKeyWi
         }
     }
 
-    direction_key_from_bools(up, right, down, left, move_speed)
+    movement_data_from_bools(up, right, down, left, move_speed, use_tile)
 }
 
 impl App {
     /// Get keys pressed (with exactly-once semantics, clearing them)
     /// Returns Some(nonempty vec) or None
-    pub fn get_keys_pressed(&mut self) -> Option<DirectionKeyWithJump> {
+    pub fn get_keys_pressed(&mut self) -> Option<PlayerMovementData> {
         let result = std::mem::take(&mut self.recent_keys);
         direction_key_from_egui_keys(&result)
     }
@@ -228,6 +235,7 @@ fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
             egui::Key::ArrowDown,
             egui::Key::ArrowLeft,
             egui::Key::Space, // Space for jump
+            egui::Key::Enter, // Enter for use tile
         ] {
             if i.key_pressed(key) {
                 if app.pending_keys.is_empty() {
@@ -315,7 +323,7 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
                 egui::Color32::RED,
             );
         }
-        Tile::Portal(c) => {
+        Tile::Portal(c, _) => {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,

@@ -28,7 +28,7 @@ pub enum Tile {
     MoveDiagonal(DiagonalDirectionsAllowed), // Move in specific directions, can be cardinal or diagonal
     Cloud(CardinalDirectionsAllowed),        // Clouds, disappear after one use
     Bounce(isize), // Bounce some amount of squares, +/- some amount of acceleration or deceleration
-    Portal(char),  // Portal, teleport to other portal with same letter
+    Portal(char, (usize, usize)), // Portal, teleport to other portal with same letter
     Water,         // Water
     Ice,           // Ice
     Door,          // Doors, requires
@@ -57,7 +57,7 @@ pub const ALL_TILES: &[Tile] = &[
         left: true,
     }),
     Tile::Bounce(0),
-    Tile::Portal('A'),
+    Tile::Portal('A', (0, 0)),
     Tile::Water,
     Tile::Ice,
     Tile::Door,
@@ -75,7 +75,7 @@ impl Tile {
             Tile::MoveDiagonal(_) => "assets/move_diagonal.png",
             Tile::Cloud(_) => "assets/cloud.png",
             Tile::Bounce(_) => "assets/bounce.png",
-            Tile::Portal(_) => "assets/portal.png",
+            Tile::Portal(..) => "assets/portal.png",
             Tile::Water => "assets/water.png",
             Tile::Ice => "assets/ice.png",
             Tile::Door => "assets/door.png",
@@ -100,7 +100,7 @@ impl Tile {
             Tile::Bounce(_) => {
                 "A tile that bounces the player a certain distance. Use up and down to set the bounce modifier."
             }
-            Tile::Portal(_) => {
+            Tile::Portal(..) => {
                 "A portal tile that teleports the player to another location. Type a letter to identify the portal."
             }
             Tile::Door => {
@@ -127,7 +127,7 @@ impl Tile {
             }
             Tile::Empty
             | Tile::Bounce(_)
-            | Tile::Portal(_)
+            | Tile::Portal(..)
             | Tile::Water
             | Tile::Ice
             | Tile::Door
