@@ -302,10 +302,15 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
             }
         }
         Tile::Bounce(val) => {
+            let text = if *val > 0 {
+                format!("+{}", val)
+            } else {
+                format!("{}", val)
+            };
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("{}", val),
+                text,
                 egui::FontId::monospace(16.0),
                 egui::Color32::RED,
             );
@@ -522,13 +527,13 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
             .show(ui, |ui| {
                 for (row_idx, row) in app.playing_model.get_board().iter().enumerate() {
                     for (col_idx, tile) in row.iter().enumerate() {
-                        // Draw faint white border around each cell
                         let rect = draw_tile(
                             tile,
                             ui,
                             (row_idx, col_idx) == app.playing_model.get_player_pos(),
                         )
                         .rect;
+                        // Draw faint white border around each cell
                         ui.painter().rect_stroke(
                             rect,
                             0.0,

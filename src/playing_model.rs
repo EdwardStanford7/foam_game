@@ -52,18 +52,13 @@ impl PlayingModel {
         let mut current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
         let mut old_pos = self.player_pos;
 
-        println!(
-            "Handling player movement: {:?} at position: {:?}",
-            movement, self.player_pos
-        );
-
         while !matches!(current_tile, Tile::Empty) {
             match movement.direction {
                 DirectionKey::Up => {
                     if current_tile.can_move_in_direction(&movement.direction) {
                         self.player_pos.0 = self.player_pos.0.saturating_sub(movement.move_speed);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::Right => {
@@ -71,7 +66,7 @@ impl PlayingModel {
                         self.player_pos.1 =
                             (self.player_pos.1 + movement.move_speed).min(self.board_size.1 - 1);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::Down => {
@@ -79,14 +74,14 @@ impl PlayingModel {
                         self.player_pos.0 =
                             (self.player_pos.0 + movement.move_speed).min(self.board_size.0 - 1);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::Left => {
                     if current_tile.can_move_in_direction(&movement.direction) {
                         self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::UpRight => {
@@ -95,7 +90,7 @@ impl PlayingModel {
                         self.player_pos.1 = (self.player_pos.1 + 1 + movement.move_speed)
                             .min(self.board_size.1 - 1);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::DownRight => {
@@ -105,7 +100,7 @@ impl PlayingModel {
                         self.player_pos.1 =
                             (self.player_pos.1 + movement.move_speed).min(self.board_size.1 - 1);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::DownLeft => {
@@ -114,7 +109,7 @@ impl PlayingModel {
                             (self.player_pos.0 + movement.move_speed).min(self.board_size.0 - 1);
                         self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
                 DirectionKey::UpLeft => {
@@ -122,7 +117,7 @@ impl PlayingModel {
                         self.player_pos.0 = self.player_pos.0.saturating_sub(movement.move_speed);
                         self.player_pos.1 = self.player_pos.1.saturating_sub(movement.move_speed);
                     } else {
-                        break; // Can't move further
+                        return false; // Can't move further
                     }
                 }
             }
@@ -135,6 +130,30 @@ impl PlayingModel {
             // If the current tile is a cloud, remove it
             if matches!(current_tile, Tile::Cloud(_)) {
                 self.board[self.player_pos.0][self.player_pos.1] = Tile::Empty;
+            }
+
+            // Check if there is a wall in between the old position and the new position
+            let start_row = old_pos.0.min(self.player_pos.0);
+            let end_row = old_pos.0.max(self.player_pos.0);
+            let start_col = old_pos.1.min(self.player_pos.1);
+            let end_col = old_pos.1.max(self.player_pos.1);
+
+            for row in start_row..=end_row {
+                for col in start_col..=end_col {
+                    if self.board[row][col] == Tile::Wall {
+                        // If there is a wall, revert to the position right in front of the wall
+                        self.player_pos = if old_pos.0 < self.player_pos.0 {
+                            (row.saturating_sub(1), col) // Move up
+                        } else if old_pos.0 > self.player_pos.0 {
+                            (row + 1, col) // Move down
+                        } else if old_pos.1 < self.player_pos.1 {
+                            (row, col.saturating_sub(1)) // Move left
+                        } else {
+                            (row, col + 1) // Move right
+                        };
+                        return false; // Can't move further
+                    }
+                }
             }
 
             // Update the current tile to the new tile
@@ -154,11 +173,6 @@ impl PlayingModel {
                     movement.move_speed = 0; // Reset move speed for non-movement tiles
                 }
             }
-
-            println!(
-                "Player moved to position: {:?}, current tile: {:?}",
-                self.player_pos, current_tile
-            );
         }
 
         true
