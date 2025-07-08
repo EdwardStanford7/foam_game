@@ -9,6 +9,7 @@ use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub enum AppMode {
@@ -33,6 +34,8 @@ pub struct App {
     recent_keys: Vec<egui::Key>, // Keys that have been processed and are
     /// Time that last keypress window was opened
     last_keyboard_window: f64, // Last time the keyboard window was updated
+    /// Last time the animation was updated
+    last_animation_update: Instant,
 }
 
 lazy_static::lazy_static! {
@@ -69,7 +72,6 @@ fn get_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, 
 
     Ok(cache.get(file_name).unwrap().clone())
 }
-
 impl Default for App {
     fn default() -> Self {
         App {
@@ -83,6 +85,7 @@ impl Default for App {
             pending_keys: Vec::new(),
             recent_keys: Vec::new(),
             last_keyboard_window: 0.0, // Initialize last keyboard window time
+            last_animation_update: Instant::now(),
         }
     }
 }
@@ -508,14 +511,21 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
     Play mode
 */
 
+const ANIMATION_SPEED: f64 = 0.1; // seconds per tile movement
+
 fn play_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.label("Playing Mode");
     display_playing_board(ui, app);
 
-    if let Some(mut keypress) = app.get_keys_pressed() {
-        if app.playing_model.handle_player_movement(&mut keypress) {
-            // Player reached the end tile
-            app.mode = AppMode::Editing;
+    // Start new movement animation if none is active
+    if app.playing_model.animation_state.is_none() {
+        if let Some(keypress) = app.get_keys_pressed() {
+            app.playing_model.start_movement_animation(keypress);
+        }
+    } else if app.last_animation_update.elapsed().as_secs_f64() > ANIMATION_SPEED {
+        app.last_animation_update = Instant::now();
+        if app.playing_model.step_animation() {
+            app.mode = AppMode::Editing; // Switch back to editing mode if game is over
         }
     }
 }

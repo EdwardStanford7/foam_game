@@ -160,6 +160,16 @@ impl Tile {
                 DirectionKey::UpLeft => directions.up_left,
                 _ => false,
             },
+            // Tile::Portal(..) => {
+            //     matches!(
+            //         direction,
+            //         DirectionKey::Up
+            //             | DirectionKey::Right
+            //             | DirectionKey::Down
+            //             | DirectionKey::Left
+            //             | DirectionKey::None
+            //     )
+            // }
             _ => matches!(
                 direction,
                 DirectionKey::Up | DirectionKey::Right | DirectionKey::Down | DirectionKey::Left
