@@ -3,13 +3,38 @@
 //!
 
 use super::editing_model::EditingModel;
-use super::playing_model::PlayingModel;
+use super::playing_model::{MovementPopupData, PlayingModel};
 use super::tile::{ALL_TILES, Tile};
 use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::Instant;
+
+#[derive(Debug, Clone)]
+pub struct KeyState {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+    pub space: bool,
+    pub enter: bool,
+    pub last_update: f64,
+    pub keys_pressed_this_frame: bool, // Track if any keys were pressed this frame
+}
+
+impl Default for KeyState {
+    fn default() -> Self {
+        KeyState {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            space: false,
+            enter: false,
+            last_update: 0.0,
+            keys_pressed_this_frame: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum AppMode {
@@ -28,52 +53,35 @@ pub struct App {
     width_slider: usize,                       // Width slider for board size
     height_slider: usize,                      // Height slider for board size
 
-    /// Keys pending in the last key window buffer
-    pending_keys: Vec<egui::Key>,
-    /// Completed window of keys pressed
-    recent_keys: Vec<egui::Key>, // Keys that have been processed and are
-    /// Time that last keypress window was opened
-    last_keyboard_window: f64, // Last time the keyboard window was updated
-    /// Last time the animation was updated
-    last_animation_update: Instant,
-}
+    key_state: KeyState,
+    last_animation_update: f64,
 
-lazy_static::lazy_static! {
-    static ref TEXTURE_CACHE: Mutex<HashMap<String, egui::TextureHandle>> = Mutex::new(HashMap::new());
+    texture_cache: HashMap<String, egui::TextureHandle>,
+    popup_message: Option<String>,
 }
 
 // Add method to get cached texture
-fn get_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
-    let file_name = tile.file_name();
+fn load_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
+    let image = tile
+        .load_image()
+        .map_err(|err| format!("Error loading texture: {}", err))?;
 
-    let mut cache = TEXTURE_CACHE.lock().unwrap();
+    let texture = ctx.load_texture(tile.file_name(), image, egui::TextureOptions::default());
 
-    if !cache.contains_key(file_name) {
-        // Load and cache the texture
-        let image = image::ImageReader::open(file_name)
-            .map_err(|err| format!("Error loading texture file at {}: {}", file_name, err))?
-            .decode()
-            .map_err(|err| format!("Error decoding image at {}: {}", file_name, err))?;
-
-        // Resize the image to 32x32
-        let image = image.resize(32, 32, image::imageops::FilterType::Nearest);
-        let size = [32, 32]; // Fixed size
-        let image_buffer = image.to_rgba8();
-        let pixels = image_buffer.as_flat_samples();
-
-        let texture = ctx.load_texture(
-            file_name,
-            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()),
-            egui::TextureOptions::default(),
-        );
-
-        cache.insert(file_name.to_string(), texture);
-    }
-
-    Ok(cache.get(file_name).unwrap().clone())
+    Ok(texture)
 }
-impl Default for App {
-    fn default() -> Self {
+
+impl App {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut texture_cache = HashMap::new();
+
+        // Pre-load all textures at startup
+        for tile in ALL_TILES {
+            if let Ok(texture) = load_texture(&cc.egui_ctx, tile) {
+                texture_cache.insert(tile.file_name().to_string(), texture);
+            }
+        }
+
         App {
             editing_model: Default::default(),
             playing_model: Default::default(),
@@ -82,24 +90,42 @@ impl Default for App {
             selected_tile_pos: None,
             width_slider: 0,
             height_slider: 0,
-            pending_keys: Vec::new(),
-            recent_keys: Vec::new(),
-            last_keyboard_window: 0.0, // Initialize last keyboard window time
-            last_animation_update: Instant::now(),
+            texture_cache,
+            key_state: KeyState::default(),
+            last_animation_update: 0.0,
+            popup_message: None,
         }
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Request continuous repaints during animation
+        if self.playing_model.animation_state.is_some() {
+            ctx.request_repaint();
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            update_recent_keys(ui, self);
+            update_key_state(ui, self);
             match self.mode {
                 AppMode::Startup => startup_screen(ui, self),
                 AppMode::Editing => editing_screen(ui, self),
                 AppMode::Playing => play_screen(ui, self),
             }
         });
+
+        if let Some(message) = self.popup_message.clone() {
+            egui::Window::new("Result")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(&message);
+                    if ui.button("OK").clicked() {
+                        self.popup_message = None;
+                    }
+                });
+        }
     }
 }
 
@@ -191,69 +217,72 @@ pub fn direction_key_into_bools(direction: &DirectionKey) -> (bool, bool, bool, 
     (up, right, down, left)
 }
 
-pub fn direction_key_from_egui_keys(keys: &[egui::Key]) -> Option<PlayerMovementData> {
-    let mut move_speed = 1;
-    let mut up = false;
-    let mut right = false;
-    let mut down = false;
-    let mut left = false;
-    let mut use_tile = false;
-
-    for &key in keys {
-        match key {
-            egui::Key::ArrowUp => up = true,
-            egui::Key::ArrowRight => right = true,
-            egui::Key::ArrowDown => down = true,
-            egui::Key::ArrowLeft => left = true,
-            egui::Key::Space => move_speed = 2, // Space key indicates a move speed of 2
-            egui::Key::Enter => use_tile = true, // Enter key indicates using the tile
-            _ => {
-                // Ignore other keys
-                continue;
-            }
-        }
-    }
-
-    movement_data_from_bools(up, right, down, left, move_speed, use_tile)
-}
-
 impl App {
-    /// Get keys pressed (with exactly-once semantics, clearing them)
-    /// Returns Some(nonempty vec) or None
-    pub fn get_keys_pressed(&mut self) -> Option<PlayerMovementData> {
-        let result = std::mem::take(&mut self.recent_keys);
-        direction_key_from_egui_keys(&result)
+    pub fn get_movement_data(&mut self) -> Option<PlayerMovementData> {
+        if !self.key_state.keys_pressed_this_frame {
+            return None;
+        }
+
+        let movement_data = movement_data_from_bools(
+            self.key_state.up,
+            self.key_state.right,
+            self.key_state.down,
+            self.key_state.left,
+            if self.key_state.space { 2 } else { 1 }, // move_speed
+            self.key_state.enter,                     // use_tile
+        );
+
+        // Clear the key state after consuming it
+        self.key_state.up = false;
+        self.key_state.down = false;
+        self.key_state.left = false;
+        self.key_state.right = false;
+        self.key_state.space = false;
+        self.key_state.enter = false;
+        self.key_state.keys_pressed_this_frame = false;
+
+        movement_data
     }
 }
 
-const KEY_WINDOW_BUFFER_SECS: f64 = 0.1;
+fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
+    let current_time = ui.input(|i| i.time);
+    let mut any_key_pressed = false;
+    app.key_state.space = false;
 
-/// Get keyboard input from egui and load it into recent_keys
-fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
-    // Add any new key presses this frame
     ui.input(|i| {
-        for key in [
-            egui::Key::ArrowUp,
-            egui::Key::ArrowRight,
-            egui::Key::ArrowDown,
-            egui::Key::ArrowLeft,
-            egui::Key::Space, // Space for jump
-            egui::Key::Enter, // Enter for use tile
-        ] {
-            if i.key_pressed(key) {
-                if app.pending_keys.is_empty() {
-                    app.last_keyboard_window = i.time;
-                }
-                app.pending_keys.push(key);
-            }
+        // Check for key presses (not just key down)
+        if i.key_pressed(egui::Key::ArrowUp) {
+            app.key_state.up = true;
+            any_key_pressed = true;
+        }
+        if i.key_pressed(egui::Key::ArrowDown) {
+            app.key_state.down = true;
+            any_key_pressed = true;
+        }
+        if i.key_pressed(egui::Key::ArrowLeft) {
+            app.key_state.left = true;
+            any_key_pressed = true;
+        }
+        if i.key_pressed(egui::Key::ArrowRight) {
+            app.key_state.right = true;
+            any_key_pressed = true;
+        }
+        if i.key_down(egui::Key::Space) {
+            app.key_state.space = true;
+            any_key_pressed = true;
+        }
+        if i.key_pressed(egui::Key::Enter) {
+            app.key_state.enter = true;
+            any_key_pressed = true;
         }
     });
 
-    if !app.pending_keys.is_empty()
-        && app.recent_keys.is_empty()
-        && ui.input(|i| i.time) - app.last_keyboard_window > KEY_WINDOW_BUFFER_SECS
-    {
-        std::mem::swap(&mut app.recent_keys, &mut app.pending_keys);
+    if any_key_pressed {
+        app.key_state.last_update = current_time;
+        app.key_state.keys_pressed_this_frame = true;
+    } else {
+        app.key_state.keys_pressed_this_frame = false;
     }
 }
 
@@ -261,18 +290,19 @@ fn update_recent_keys(ui: &mut egui::Ui, app: &mut App) {
     Draw tile
 */
 
-fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
+fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
     let painter = ui.painter_at(rect);
 
-    // Draw the base tile image
-    painter.image(
-        get_texture(ui.ctx(), tile).unwrap().id(),
-        rect,
-        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
+    if let Some(texture) = app.texture_cache.get(tile.file_name()) {
+        painter.image(
+            texture.id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
 
     // Draw overlays
     match tile {
@@ -316,7 +346,7 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, player: bool) -> egui::Response {
             let text = if *val > 0 {
                 format!("+{}", val)
             } else {
-                format!("{}", val)
+                val.to_string()
             };
             painter.text(
                 rect.center(),
@@ -417,7 +447,7 @@ fn editing_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.add_space(25.0);
     display_editing_board(ui, app);
 
-    if let Some(keypress) = app.get_keys_pressed() {
+    if let Some(keypress) = app.get_movement_data() {
         if let Some(selected_tile_pos) = app.selected_tile_pos {
             app.editing_model.edit_tile(selected_tile_pos, &keypress);
         }
@@ -452,14 +482,14 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             }
             ui.label("Selected Tile:")
                 .on_hover_text(app.selected_type.explanation());
-            draw_tile(&app.selected_type, ui, false);
+            draw_tile(&app.selected_type, ui, app, false);
         });
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             for tile in ALL_TILES {
-                if draw_tile(tile, ui, false).clicked() {
+                if draw_tile(tile, ui, app, false).clicked() {
                     app.selected_type = tile.clone();
                 }
             }
@@ -477,7 +507,7 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
         .show(ui, |ui| {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
                 for (col_idx, tile) in row.iter().enumerate() {
-                    let response = draw_tile(tile, ui, false);
+                    let response = draw_tile(tile, ui, app, false);
                     if response.clicked() {
                         edited_pos = Some((row_idx, col_idx));
                     }
@@ -517,15 +547,26 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
     ui.label("Playing Mode");
     display_playing_board(ui, app);
 
-    // Start new movement animation if none is active
     if app.playing_model.animation_state.is_none() {
-        if let Some(keypress) = app.get_keys_pressed() {
+        if let Some(keypress) = app.get_movement_data() {
             app.playing_model.start_movement_animation(keypress);
+            app.last_animation_update = ui.input(|i| i.time);
         }
-    } else if app.last_animation_update.elapsed().as_secs_f64() > ANIMATION_SPEED {
-        app.last_animation_update = Instant::now();
-        if app.playing_model.step_animation() {
-            app.mode = AppMode::Editing; // Switch back to editing mode if game is over
+    } else {
+        let current_time = ui.input(|i| i.time);
+        if current_time - app.last_animation_update > ANIMATION_SPEED {
+            app.last_animation_update = current_time;
+            match app.playing_model.step_animation() {
+                MovementPopupData::None => {}
+                MovementPopupData::Won => {
+                    app.popup_message = Some("You won! Congratulations!".to_string());
+                    app.mode = AppMode::Editing; // Switch back to editing mode after winning
+                }
+                MovementPopupData::Lost => {
+                    app.popup_message = Some("You lost! Better luck next time!".to_string());
+                    app.mode = AppMode::Editing; // Switch back to editing mode after losing
+                }
+            }
         }
     }
 }
@@ -538,8 +579,12 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
 
         ui.add_space(50.0);
 
-        // Display the board using a grid layout
-        egui::Grid::new("playing_board_grid")
+        let grid_id = format!(
+            "playing_board_grid_{}",
+            app.playing_model.get_player_pos().0
+        );
+
+        egui::Grid::new(grid_id)
             .spacing(egui::vec2(2.0, 2.0))
             .min_col_width(0.0)
             .show(ui, |ui| {
@@ -548,6 +593,7 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
                         let rect = draw_tile(
                             tile,
                             ui,
+                            app,
                             (row_idx, col_idx) == app.playing_model.get_player_pos(),
                         )
                         .rect;

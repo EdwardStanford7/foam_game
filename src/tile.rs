@@ -160,20 +160,45 @@ impl Tile {
                 DirectionKey::UpLeft => directions.up_left,
                 _ => false,
             },
-            // Tile::Portal(..) => {
-            //     matches!(
-            //         direction,
-            //         DirectionKey::Up
-            //             | DirectionKey::Right
-            //             | DirectionKey::Down
-            //             | DirectionKey::Left
-            //             | DirectionKey::None
-            //     )
-            // }
+            Tile::Portal(..) => {
+                matches!(
+                    direction,
+                    DirectionKey::Up
+                        | DirectionKey::Right
+                        | DirectionKey::Down
+                        | DirectionKey::Left
+                        | DirectionKey::None
+                )
+            }
             _ => matches!(
                 direction,
                 DirectionKey::Up | DirectionKey::Right | DirectionKey::Down | DirectionKey::Left
-            ), // Other tiles allow movement in any cardinal direction
+            ),
         }
+    }
+
+    // Add method to load image data from file
+    pub fn load_image(&self) -> Result<egui::ColorImage, String> {
+        let image = image::ImageReader::open(self.file_name())
+            .map_err(|err| {
+                format!(
+                    "Error loading texture file at {}: {}",
+                    self.file_name(),
+                    err
+                )
+            })?
+            .decode()
+            .map_err(|err| format!("Error decoding image at {}: {}", self.file_name(), err))?;
+
+        // Resize the image to 32x32
+        let image = image.resize(32, 32, image::imageops::FilterType::Nearest);
+        let size = [32, 32]; // Fixed size
+        let image_buffer = image.to_rgba8();
+        let pixels = image_buffer.as_flat_samples();
+
+        Ok(egui::ColorImage::from_rgba_unmultiplied(
+            size,
+            pixels.as_slice(),
+        ))
     }
 }

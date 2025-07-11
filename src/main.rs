@@ -22,6 +22,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Foam Game",
         options,
-        Box::new(|_cc| Ok(Box::new(App::default()))),
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
     )
 }

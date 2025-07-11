@@ -6,6 +6,14 @@ use super::tile::Tile;
 use crate::{editing_model, game_ui::DirectionKey, game_ui::PlayerMovementData};
 
 #[derive(Debug, Clone)]
+pub enum MovementPopupData {
+    None, // No popup
+    Lost, // Lost the game
+    Won,  // Won the game
+          // Wall, // Hit a wall, MARK: @Caleb figure out how to use something like this for keys
+}
+
+#[derive(Debug, Clone)]
 pub struct PlayingAnimationState {
     pub current_tile: Tile,
     pub old_pos: (usize, usize), // previous position of the player
@@ -77,11 +85,11 @@ impl PlayingModel {
         });
     }
 
-    pub fn step_animation(&mut self) -> bool {
+    pub fn step_animation(&mut self) -> MovementPopupData {
         if let Some(state) = &mut self.animation_state {
             if state.finished {
                 self.animation_state = None;
-                return false;
+                return MovementPopupData::None;
             }
 
             state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
@@ -92,15 +100,15 @@ impl PlayingModel {
                     self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed)
                 }
                 DirectionKey::Down => {
-                    self.player_pos.0 = (self.player_pos.0 + state.movement_speed)
-                        .min(self.board_size.0 - state.movement_speed)
+                    self.player_pos.0 =
+                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
                 }
                 DirectionKey::Left => {
                     self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed)
                 }
                 DirectionKey::Right => {
-                    self.player_pos.1 = (self.player_pos.1 + state.movement_speed)
-                        .min(self.board_size.1 - state.movement_speed);
+                    self.player_pos.1 =
+                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
                 }
                 DirectionKey::UpLeft => {
                     self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
@@ -108,19 +116,19 @@ impl PlayingModel {
                 }
                 DirectionKey::UpRight => {
                     self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
-                    self.player_pos.1 = (self.player_pos.1 + state.movement_speed)
-                        .min(self.board_size.1 - state.movement_speed);
+                    self.player_pos.1 =
+                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
                 }
                 DirectionKey::DownLeft => {
-                    self.player_pos.0 = (self.player_pos.0 + state.movement_speed)
-                        .min(self.board_size.0 - state.movement_speed);
+                    self.player_pos.0 =
+                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
                     self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed);
                 }
                 DirectionKey::DownRight => {
-                    self.player_pos.0 = (self.player_pos.0 + state.movement_speed)
-                        .min(self.board_size.0 - state.movement_speed);
-                    self.player_pos.1 = (self.player_pos.1 + state.movement_speed)
-                        .min(self.board_size.1 - state.movement_speed);
+                    self.player_pos.0 =
+                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
+                    self.player_pos.1 =
+                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
                 }
                 DirectionKey::None => {
                     if let Tile::Portal(_, pos) = state.current_tile {
@@ -130,14 +138,14 @@ impl PlayingModel {
                         }
                     }
                     state.finished = true;
-                    return false;
+                    return MovementPopupData::None;
                 }
             }
 
             // No movement occurred
             if self.player_pos == state.old_pos {
                 state.finished = true;
-                return false;
+                return MovementPopupData::None;
             }
 
             // If the current tile is a cloud, remove it
@@ -164,7 +172,7 @@ impl PlayingModel {
                         } else {
                             (row, col + 1) // Move right
                         };
-                        return false; // Can't move further
+                        return MovementPopupData::None; // MARK: change to MovementPopupData::Wall probably
                     }
                 }
             }
@@ -176,7 +184,7 @@ impl PlayingModel {
             match state.current_tile {
                 Tile::EndSpace => {
                     state.finished = true;
-                    return true; // End game
+                    return MovementPopupData::Won;
                 }
                 Tile::Bounce(amount) => {
                     state.movement_speed =
@@ -186,7 +194,7 @@ impl PlayingModel {
                     state.movement_speed = 1;
                 }
                 Tile::Empty => {
-                    return true; // End game
+                    return MovementPopupData::Lost; // End game
                 }
                 _ => {
                     state.movement_speed = 0;
@@ -198,6 +206,6 @@ impl PlayingModel {
             }
         }
 
-        false
+        MovementPopupData::None
     }
 }
