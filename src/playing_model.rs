@@ -172,7 +172,6 @@ impl PlayingModel {
                         } else {
                             (row, col + 1) // Move right
                         };
-                        return MovementPopupData::None; // MARK: change to MovementPopupData::Wall probably
                     }
                 }
             }

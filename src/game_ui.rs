@@ -248,6 +248,10 @@ impl App {
 fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
     let current_time = ui.input(|i| i.time);
     let mut any_key_pressed = false;
+    app.key_state.up = false;
+    app.key_state.right = false;
+    app.key_state.down = false;
+    app.key_state.left = false;
     app.key_state.space = false;
 
     ui.input(|i| {
@@ -275,6 +279,22 @@ fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
         if i.key_pressed(egui::Key::Enter) {
             app.key_state.enter = true;
             any_key_pressed = true;
+        }
+
+        // Tad hacky but should work. If any key was pressed this frame also check for keys down (to allow multidirectional input)
+        if any_key_pressed {
+            if i.key_down(egui::Key::ArrowUp) {
+                app.key_state.up = true;
+            }
+            if i.key_down(egui::Key::ArrowDown) {
+                app.key_state.down = true;
+            }
+            if i.key_down(egui::Key::ArrowLeft) {
+                app.key_state.left = true;
+            }
+            if i.key_down(egui::Key::ArrowRight) {
+                app.key_state.right = true;
+            }
         }
     });
 
