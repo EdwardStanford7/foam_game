@@ -10,7 +10,14 @@ pub enum MovementPopupData {
     None, // No popup
     Lost, // Lost the game
     Won,  // Won the game
-          // Wall, // Hit a wall, MARK: @Caleb figure out how to use something like this for keys
+    Wall, // Hit a wall
+}
+
+#[derive(Debug, Clone)]
+pub enum GameKeys {
+    None, // No key used
+    Wall, // Wall key allows you to move through/on walls
+          // more as needed
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +28,7 @@ pub struct PlayingAnimationState {
     pub direction: DirectionKey,
     pub use_tile: bool,
     pub finished: bool,
+    pub waiting_on_key: bool, // whether the animation is waiting for the user to use a key
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,63 +90,110 @@ impl PlayingModel {
             direction: movement.direction,
             use_tile: movement.use_tile,
             finished: false,
+            waiting_on_key: false,
         });
     }
 
-    pub fn step_animation(&mut self) -> MovementPopupData {
+    pub fn step_animation(&mut self, keys: &GameKeys) -> MovementPopupData {
         if let Some(state) = &mut self.animation_state {
             if state.finished {
                 self.animation_state = None;
                 return MovementPopupData::None;
             }
 
-            state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
-            state.old_pos = self.player_pos;
+            // If no key is being used just move normally
+            if !state.waiting_on_key {
+                state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
+                state.old_pos = self.player_pos;
 
-            match state.direction {
-                DirectionKey::Up => {
-                    self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed)
+                match state.direction {
+                    DirectionKey::Up => {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed)
+                    }
+                    DirectionKey::Down => {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
+                    }
+                    DirectionKey::Left => {
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed)
+                    }
+                    DirectionKey::Right => {
+                        self.player_pos.1 =
+                            (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
+                    }
+                    DirectionKey::UpLeft => {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed);
+                    }
+                    DirectionKey::UpRight => {
+                        self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
+                        self.player_pos.1 =
+                            (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
+                    }
+                    DirectionKey::DownLeft => {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
+                        self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed);
+                    }
+                    DirectionKey::DownRight => {
+                        self.player_pos.0 =
+                            (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
+                        self.player_pos.1 =
+                            (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
+                    }
+                    DirectionKey::None => {
+                        if let Tile::Portal(_, pos) = state.current_tile {
+                            if state.use_tile {
+                                self.player_pos.0 = pos.0 + 1; // offset by 1 to account for padding
+                                self.player_pos.1 = pos.1 + 1; // offset by 1 to account for padding
+                            }
+                        }
+                        state.finished = true;
+                        return MovementPopupData::None;
+                    }
                 }
-                DirectionKey::Down => {
-                    self.player_pos.0 =
-                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
-                }
-                DirectionKey::Left => {
-                    self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed)
-                }
-                DirectionKey::Right => {
-                    self.player_pos.1 =
-                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
-                }
-                DirectionKey::UpLeft => {
-                    self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
-                    self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed);
-                }
-                DirectionKey::UpRight => {
-                    self.player_pos.0 = self.player_pos.0.saturating_sub(state.movement_speed);
-                    self.player_pos.1 =
-                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
-                }
-                DirectionKey::DownLeft => {
-                    self.player_pos.0 =
-                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
-                    self.player_pos.1 = self.player_pos.1.saturating_sub(state.movement_speed);
-                }
-                DirectionKey::DownRight => {
-                    self.player_pos.0 =
-                        (self.player_pos.0 + state.movement_speed).min(self.board_size.0 - 1);
-                    self.player_pos.1 =
-                        (self.player_pos.1 + state.movement_speed).min(self.board_size.1 - 1);
-                }
-                DirectionKey::None => {
-                    if let Tile::Portal(_, pos) = state.current_tile {
-                        if state.use_tile {
-                            self.player_pos.0 = pos.0 + 1; // offset by 1 to account for padding
-                            self.player_pos.1 = pos.1 + 1; // offset by 1 to account for padding
+            }
+
+            // Check if there is a wall in between the old position and the new position
+            let start_row = state.old_pos.0.min(self.player_pos.0);
+            let end_row = state.old_pos.0.max(self.player_pos.0);
+            let start_col = state.old_pos.1.min(self.player_pos.1);
+            let end_col = state.old_pos.1.max(self.player_pos.1);
+
+            for row in start_row..=end_row {
+                for col in start_col..=end_col {
+                    if self.board[row][col] == Tile::Wall {
+                        if state.waiting_on_key {
+                            println!(
+                                "Waiting for wall key at ({}, {}) keys: {:?}",
+                                row, col, keys
+                            );
+                            // If the user is waiting for a key and the key is used, allow movement
+                            if matches!(keys, GameKeys::Wall) {
+                                state.waiting_on_key = false;
+                                continue; // Continue to allow movement
+                            } else {
+                                // If the user is not using the wall key, revert to the old position
+                                state.waiting_on_key = false;
+
+                                // If there is a wall, revert to the position right in front of the wall
+                                self.player_pos = if state.old_pos.0 < self.player_pos.0 {
+                                    (row.saturating_sub(1), col) // Move up
+                                } else if state.old_pos.0 > self.player_pos.0 {
+                                    (row + 1, col) // Move down
+                                } else if state.old_pos.1 < self.player_pos.1 {
+                                    (row, col.saturating_sub(1)) // Move left
+                                } else {
+                                    (row, col + 1) // Move right
+                                };
+                            }
+                        } else {
+                            println!("Hit a wall at ({}, {})", row, col);
+                            // Need to prompt the user to use the wall key
+                            state.waiting_on_key = true;
+                            return MovementPopupData::Wall;
                         }
                     }
-                    state.finished = true;
-                    return MovementPopupData::None;
                 }
             }
 
@@ -151,29 +206,6 @@ impl PlayingModel {
             // If the current tile is a cloud, remove it
             if matches!(state.current_tile, Tile::Cloud(_)) {
                 self.board[self.player_pos.0][self.player_pos.1] = Tile::Empty;
-            }
-
-            // Check if there is a wall in between the old position and the new position
-            let start_row = state.old_pos.0.min(self.player_pos.0);
-            let end_row = state.old_pos.0.max(self.player_pos.0);
-            let start_col = state.old_pos.1.min(self.player_pos.1);
-            let end_col = state.old_pos.1.max(self.player_pos.1);
-
-            for row in start_row..=end_row {
-                for col in start_col..=end_col {
-                    if self.board[row][col] == Tile::Wall {
-                        // If there is a wall, revert to the position right in front of the wall
-                        self.player_pos = if state.old_pos.0 < self.player_pos.0 {
-                            (row.saturating_sub(1), col) // Move up
-                        } else if state.old_pos.0 > self.player_pos.0 {
-                            (row + 1, col) // Move down
-                        } else if state.old_pos.1 < self.player_pos.1 {
-                            (row, col.saturating_sub(1)) // Move left
-                        } else {
-                            (row, col + 1) // Move right
-                        };
-                    }
-                }
             }
 
             // Apply movement

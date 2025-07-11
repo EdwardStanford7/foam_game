@@ -3,7 +3,7 @@
 //!
 
 use super::editing_model::EditingModel;
-use super::playing_model::{MovementPopupData, PlayingModel};
+use super::playing_model::{GameKeys, MovementPopupData, PlayingModel};
 use super::tile::{ALL_TILES, Tile};
 use eframe::egui;
 use native_dialog::FileDialog;
@@ -57,7 +57,23 @@ pub struct App {
     last_animation_update: f64,
 
     texture_cache: HashMap<String, egui::TextureHandle>,
-    popup_message: Option<String>,
+
+    popup_data: Option<PopupData>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PopupData {
+    pub message: String,
+    pub popup_type: PopupType,
+}
+
+#[derive(Debug, Clone)]
+pub enum PopupType {
+    Ok,
+    YesNo {
+        on_yes: fn(&mut App),
+        on_no: Option<fn(&mut App)>,
+    },
 }
 
 // Add method to get cached texture
@@ -93,7 +109,7 @@ impl App {
             texture_cache,
             key_state: KeyState::default(),
             last_animation_update: 0.0,
-            popup_message: None,
+            popup_data: None,
         }
     }
 }
@@ -114,15 +130,36 @@ impl eframe::App for App {
             }
         });
 
-        if let Some(message) = self.popup_message.clone() {
+        if let Some(PopupData {
+            message,
+            popup_type,
+        }) = self.popup_data.clone()
+        {
             egui::Window::new("Result")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label(&message);
-                    if ui.button("OK").clicked() {
-                        self.popup_message = None;
+
+                    match popup_type {
+                        PopupType::Ok => {
+                            if ui.button("OK").clicked() {
+                                self.popup_data = None;
+                            }
+                        }
+                        PopupType::YesNo { on_yes, on_no } => {
+                            if ui.button("Yes").clicked() {
+                                on_yes(self);
+                                self.popup_data = None;
+                            }
+                            if ui.button("No").clicked() {
+                                if let Some(on_no_fn) = on_no {
+                                    on_no_fn(self);
+                                }
+                                self.popup_data = None;
+                            }
+                        }
                     }
                 });
         }
@@ -441,7 +478,7 @@ fn startup_screen(ui: &mut egui::Ui, app: &mut App) {
 }
 
 fn open_file_dialog(is_save: bool) -> Result<String, String> {
-    let dialog = FileDialog::new().add_filter("Foam Game Board", &["fgb"]);
+    let dialog = FileDialog::new().add_filter("Foam Game Board", &["fg"]);
 
     let file_path = if is_save {
         dialog.set_title("Save Board").show_save_single_file()
@@ -572,18 +609,38 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
             app.playing_model.start_movement_animation(keypress);
             app.last_animation_update = ui.input(|i| i.time);
         }
-    } else {
+    } else if app.popup_data.is_none() {
         let current_time = ui.input(|i| i.time);
         if current_time - app.last_animation_update > ANIMATION_SPEED {
             app.last_animation_update = current_time;
-            match app.playing_model.step_animation() {
+            match app.playing_model.step_animation(&GameKeys::None) {
                 MovementPopupData::None => {}
+                MovementPopupData::Wall => {
+                    println!("Waiting for wall key");
+                    app.popup_data = Some(PopupData {
+                        message: "You hit a wall! Do you want to use the red key?".to_string(),
+                        popup_type: PopupType::YesNo {
+                            on_yes: |app| {
+                                app.playing_model.step_animation(&GameKeys::Wall);
+                            },
+                            on_no: Some(|app| {
+                                app.playing_model.step_animation(&GameKeys::None);
+                            }),
+                        },
+                    });
+                }
                 MovementPopupData::Won => {
-                    app.popup_message = Some("You won! Congratulations!".to_string());
+                    app.popup_data = Some(PopupData {
+                        message: "You won! Congratulations!".to_string(),
+                        popup_type: PopupType::Ok,
+                    });
                     app.mode = AppMode::Editing; // Switch back to editing mode after winning
                 }
                 MovementPopupData::Lost => {
-                    app.popup_message = Some("You lost! Better luck next time!".to_string());
+                    app.popup_data = Some(PopupData {
+                        message: "You lost! Better luck next time!".to_string(),
+                        popup_type: PopupType::Ok,
+                    });
                     app.mode = AppMode::Editing; // Switch back to editing mode after losing
                 }
             }
