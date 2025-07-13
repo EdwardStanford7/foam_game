@@ -2,7 +2,7 @@
 //! Logic for editing and playing the game
 //!
 
-use super::tile::Tile;
+use super::tile::{Powerup, Tile};
 use crate::{editing_model, game_ui::DirectionKey, game_ui::PlayerMovementData};
 
 #[derive(Debug, Clone)]
@@ -14,13 +14,6 @@ pub enum MovementPopupData {
 }
 
 #[derive(Debug, Clone)]
-pub enum GameKeys {
-    None, // No key used
-    Wall, // Wall key allows you to move through/on walls
-          // more as needed
-}
-
-#[derive(Debug, Clone)]
 pub struct PlayingAnimationState {
     pub current_tile: Tile,
     pub old_pos: (usize, usize), // previous position of the player
@@ -28,7 +21,7 @@ pub struct PlayingAnimationState {
     pub direction: DirectionKey,
     pub use_tile: bool,
     pub finished: bool,
-    pub waiting_on_key: bool, // whether the animation is waiting for the user to use a key
+    pub waiting_on_powerup: bool, // whether the animation is waiting for the user to use a key
 }
 
 #[derive(Debug, Clone, Default)]
@@ -90,11 +83,11 @@ impl PlayingModel {
             direction: movement.direction,
             use_tile: movement.use_tile,
             finished: false,
-            waiting_on_key: false,
+            waiting_on_powerup: false,
         });
     }
 
-    pub fn step_animation(&mut self, keys: &GameKeys) -> MovementPopupData {
+    pub fn step_animation(&mut self, keys: &Powerup) -> MovementPopupData {
         if let Some(state) = &mut self.animation_state {
             if state.finished {
                 self.animation_state = None;
@@ -102,7 +95,7 @@ impl PlayingModel {
             }
 
             // If no key is being used just move normally
-            if !state.waiting_on_key {
+            if !state.waiting_on_powerup {
                 state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
                 state.old_pos = self.player_pos;
 
@@ -163,18 +156,14 @@ impl PlayingModel {
             for row in start_row..=end_row {
                 for col in start_col..=end_col {
                     if self.board[row][col] == Tile::Wall {
-                        if state.waiting_on_key {
-                            println!(
-                                "Waiting for wall key at ({}, {}) keys: {:?}",
-                                row, col, keys
-                            );
-                            // If the user is waiting for a key and the key is used, allow movement
-                            if matches!(keys, GameKeys::Wall) {
-                                state.waiting_on_key = false;
+                        if state.waiting_on_powerup {
+                            // If the user is waiting for a powerup and the powerup is used, allow movement
+                            if matches!(keys, Powerup::Wall) {
+                                state.waiting_on_powerup = false;
                                 continue; // Continue to allow movement
                             } else {
-                                // If the user is not using the wall key, revert to the old position
-                                state.waiting_on_key = false;
+                                // If the user is not using the wall powerup, revert to the old position
+                                state.waiting_on_powerup = false;
 
                                 // If there is a wall, revert to the position right in front of the wall
                                 self.player_pos = if state.old_pos.0 < self.player_pos.0 {
@@ -188,9 +177,8 @@ impl PlayingModel {
                                 };
                             }
                         } else {
-                            println!("Hit a wall at ({}, {})", row, col);
-                            // Need to prompt the user to use the wall key
-                            state.waiting_on_key = true;
+                            // Need to prompt the user to use the wall powerup
+                            state.waiting_on_powerup = true;
                             return MovementPopupData::Wall;
                         }
                     }

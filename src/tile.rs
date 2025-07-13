@@ -4,6 +4,13 @@
 
 use crate::game_ui::DirectionKey;
 
+#[derive(Debug, Clone)]
+pub enum Powerup {
+    None, // No powerup used
+    Wall, // Wall powerup allows you to move through/on walls
+          // more as needed
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct CardinalDirectionsAllowed {
     pub up: bool,
@@ -29,7 +36,6 @@ pub enum Tile {
     Cloud(CardinalDirectionsAllowed),        // Clouds, disappear after one use
     Bounce(isize), // Bounce some amount of squares, +/- some amount of acceleration or deceleration
     Portal(char, (usize, usize)), // Portal, teleport to other portal with same letter
-    Water,         // Water
     Ice,           // Ice
     Door,          // Doors, requires
     Wall,          // Blocks movement
@@ -58,7 +64,6 @@ pub const ALL_TILES: &[Tile] = &[
     }),
     Tile::Bounce(0),
     Tile::Portal('A', (0, 0)),
-    Tile::Water,
     Tile::Ice,
     Tile::Door,
     Tile::Wall,
@@ -76,7 +81,6 @@ impl Tile {
             Tile::Cloud(_) => "assets/cloud.png",
             Tile::Bounce(_) => "assets/bounce.png",
             Tile::Portal(..) => "assets/portal.png",
-            Tile::Water => "assets/water.png",
             Tile::Ice => "assets/ice.png",
             Tile::Door => "assets/door.png",
             Tile::Wall => "assets/wall.png",
@@ -106,7 +110,6 @@ impl Tile {
             Tile::Door => {
                 "A door tile, which requires a key to pass. Type a letter to identify the door."
             }
-            Tile::Water => "A water tile, which we made up and we have no idea what it does KEKW.",
             Tile::Ice => "An ice tile, which causes the player to slide.",
             Tile::Wall => "A wall tile, which blocks movement.",
             Tile::StartSpace => "The starting space for the player.",
@@ -128,7 +131,6 @@ impl Tile {
             Tile::Empty
             | Tile::Bounce(_)
             | Tile::Portal(..)
-            | Tile::Water
             | Tile::Ice
             | Tile::Door
             | Tile::Wall

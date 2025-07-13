@@ -3,8 +3,8 @@
 //!
 
 use super::editing_model::EditingModel;
-use super::playing_model::{GameKeys, MovementPopupData, PlayingModel};
-use super::tile::{ALL_TILES, Tile};
+use super::playing_model::{MovementPopupData, PlayingModel};
+use super::tile::{ALL_TILES, Powerup, Tile};
 use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
@@ -564,10 +564,12 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
         .show(ui, |ui| {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
                 for (col_idx, tile) in row.iter().enumerate() {
+                    // Draw each tile and handle clicks
                     let response = draw_tile(tile, ui, app, false);
                     if response.clicked() {
                         edited_pos = Some((row_idx, col_idx));
                     }
+                    // Highlight the selected tile
                     if response.hovered() {
                         ui.painter().rect_filled(
                             response.rect,
@@ -577,6 +579,7 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
                         app.selected_tile_pos = Some((row_idx, col_idx));
                     }
                     let rect = response.rect;
+                    // Draw faint white border around each cell
                     ui.painter().rect_stroke(
                         rect,
                         0.0,
@@ -613,7 +616,7 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
         let current_time = ui.input(|i| i.time);
         if current_time - app.last_animation_update > ANIMATION_SPEED {
             app.last_animation_update = current_time;
-            match app.playing_model.step_animation(&GameKeys::None) {
+            match app.playing_model.step_animation(&Powerup::None) {
                 MovementPopupData::None => {}
                 MovementPopupData::Wall => {
                     println!("Waiting for wall key");
@@ -621,10 +624,10 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
                         message: "You hit a wall! Do you want to use the red key?".to_string(),
                         popup_type: PopupType::YesNo {
                             on_yes: |app| {
-                                app.playing_model.step_animation(&GameKeys::Wall);
+                                app.playing_model.step_animation(&Powerup::Wall);
                             },
                             on_no: Some(|app| {
-                                app.playing_model.step_animation(&GameKeys::None);
+                                app.playing_model.step_animation(&Powerup::None);
                             }),
                         },
                     });
