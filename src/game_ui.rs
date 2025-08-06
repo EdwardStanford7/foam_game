@@ -53,9 +53,10 @@ pub struct App {
 
     mode: AppMode,
     selected_type: Tile,
+    selected_key: KeyItem, // Currently selected key/item for editing
     selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
-    width_slider: usize,                       // Width slider for board size
-    height_slider: usize,                      // Height slider for board size
+    width_slider: usize,   // Width slider for board size
+    height_slider: usize,  // Height slider for board size
 
     key_state: KeyState,
     last_animation_update: f64,
@@ -184,6 +185,7 @@ impl App {
             playing_model: Default::default(),
             mode: AppMode::Startup,
             selected_type: Tile::Empty,
+            selected_key: KeyItem::None,
             selected_tile_pos: None,
             width_slider: 0,
             height_slider: 0,
@@ -613,6 +615,8 @@ fn startup_screen(ui: &mut egui::Ui, app: &mut App) {
         if model.is_ok() {
             app.editing_model = model.unwrap();
             app.mode = AppMode::Editing;
+        } else {
+            eprintln!("Error loading board: {}", model.unwrap_err());
         }
     }
 }
@@ -677,18 +681,60 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
                     }
                 }
             }
-            ui.label("Selected Tile:")
-                .on_hover_text(app.selected_type.explanation());
+
+            ui.label("Selected Tile:");
             draw_tile_and_key(&app.selected_type, None, ui, app, false);
+
+            ui.label("Selected Key:");
+            draw_tile_and_key(&Tile::Empty, Some(&app.selected_key), ui, app, false);
         });
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
+            // Tiles
             for tile in ALL_TILES {
                 let (tile_response, _) = draw_tile_and_key(tile, None, ui, app, false);
                 if tile_response.clicked() {
                     app.selected_type = tile.clone();
+                }
+                if tile_response.hovered() {
+                    ui.painter().rect_filled(
+                        tile_response.rect,
+                        0.0,
+                        egui::Color32::from_black_alpha(100),
+                    );
+                }
+                // white border around each tile
+                ui.painter().rect_stroke(
+                    tile_response.rect,
+                    0.0,
+                    egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                    egui::StrokeKind::Outside,
+                );
+            }
+
+            // Keys
+            for key in ALL_KEYS {
+                let (_, key_response) = draw_tile_and_key(&Tile::Empty, Some(key), ui, app, false);
+                if let Some(key_response) = key_response {
+                    if key_response.clicked() {
+                        app.selected_key = key.clone();
+                    }
+                    if key_response.hovered() {
+                        ui.painter().rect_filled(
+                            key_response.rect,
+                            0.0,
+                            egui::Color32::from_black_alpha(100),
+                        );
+                    }
+                    // white border around each key
+                    ui.painter().rect_stroke(
+                        key_response.rect,
+                        0.0,
+                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                        egui::StrokeKind::Outside,
+                    );
                 }
             }
         });
@@ -700,7 +746,7 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
 
     // Display the board
     egui::Grid::new("editing_board_grid")
-        .spacing(egui::vec2(2.0, 2.0))
+        .spacing(egui::vec2(0.0, 0.0))
         .min_col_width(0.0)
         .show(ui, |ui| {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
