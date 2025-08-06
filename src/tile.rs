@@ -19,12 +19,36 @@ pub struct CardinalDirectionsAllowed {
     pub left: bool,
 }
 
+impl CardinalDirectionsAllowed {
+    pub fn allows(&self, direction: &DirectionKey) -> bool {
+        match direction {
+            DirectionKey::Up => self.up,
+            DirectionKey::Right => self.right,
+            DirectionKey::Down => self.down,
+            DirectionKey::Left => self.left,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct DiagonalDirectionsAllowed {
     pub up_right: bool,
     pub down_right: bool,
     pub down_left: bool,
     pub up_left: bool,
+}
+
+impl DiagonalDirectionsAllowed {
+    pub fn allows(&self, direction: &DirectionKey) -> bool {
+        match direction {
+            DirectionKey::UpRight => self.up_right,
+            DirectionKey::DownRight => self.down_right,
+            DirectionKey::DownLeft => self.down_left,
+            DirectionKey::UpLeft => self.up_left,
+            _ => false,
+        }
+    }
 }
 
 // Each tile occupies one space on the board, and has different rules for movement
@@ -117,19 +141,20 @@ impl Tile {
         }
     }
 
+    /// Check if the tile is valid for the game rules - if not, will block playing
     pub fn is_valid(&self) -> bool {
         match self {
             Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
-                !(!directions.up && !directions.down && !directions.left && !directions.right)
+                directions.up || directions.down || directions.left || directions.right
             }
             Tile::MoveDiagonal(directions) => {
-                !(!directions.up_right
-                    && !directions.down_right
-                    && !directions.down_left
-                    && !directions.up_left)
+                directions.up_right
+                    || directions.down_right
+                    || directions.down_left
+                    || directions.up_left
             }
+            &Tile::Bounce(u) => (-1..=1).contains(&u),
             Tile::Empty
-            | Tile::Bounce(_)
             | Tile::Portal(..)
             | Tile::Ice
             | Tile::Door
@@ -141,66 +166,11 @@ impl Tile {
 
     pub fn can_move_in_direction(&self, direction: &DirectionKey) -> bool {
         match self {
-            Tile::MoveCardinal(directions) => match direction {
-                DirectionKey::Up => directions.up,
-                DirectionKey::Right => directions.right,
-                DirectionKey::Down => directions.down,
-                DirectionKey::Left => directions.left,
-                _ => false,
-            },
-            Tile::Cloud(directions) => match direction {
-                DirectionKey::Up => directions.up,
-                DirectionKey::Right => directions.right,
-                DirectionKey::Down => directions.down,
-                DirectionKey::Left => directions.left,
-                _ => false,
-            },
-            Tile::MoveDiagonal(directions) => match direction {
-                DirectionKey::UpRight => directions.up_right,
-                DirectionKey::DownRight => directions.down_right,
-                DirectionKey::DownLeft => directions.down_left,
-                DirectionKey::UpLeft => directions.up_left,
-                _ => false,
-            },
-            Tile::Portal(..) => {
-                matches!(
-                    direction,
-                    DirectionKey::Up
-                        | DirectionKey::Right
-                        | DirectionKey::Down
-                        | DirectionKey::Left
-                        | DirectionKey::None
-                )
-            }
-            _ => matches!(
-                direction,
-                DirectionKey::Up | DirectionKey::Right | DirectionKey::Down | DirectionKey::Left
-            ),
+            Tile::MoveCardinal(directions) => directions.allows(direction),
+            Tile::Cloud(directions) => directions.allows(direction),
+            Tile::MoveDiagonal(directions) => directions.allows(direction),
+            Tile::Portal(..) => direction.is_cardinal() || direction.is_none(),
+            _ => direction.is_cardinal(),
         }
-    }
-
-    // Add method to load image data from file
-    pub fn load_image(&self) -> Result<egui::ColorImage, String> {
-        let image = image::ImageReader::open(self.file_name())
-            .map_err(|err| {
-                format!(
-                    "Error loading texture file at {}: {}",
-                    self.file_name(),
-                    err
-                )
-            })?
-            .decode()
-            .map_err(|err| format!("Error decoding image at {}: {}", self.file_name(), err))?;
-
-        // Resize the image to 32x32
-        let image = image.resize(32, 32, image::imageops::FilterType::Nearest);
-        let size = [32, 32]; // Fixed size
-        let image_buffer = image.to_rgba8();
-        let pixels = image_buffer.as_flat_samples();
-
-        Ok(egui::ColorImage::from_rgba_unmultiplied(
-            size,
-            pixels.as_slice(),
-        ))
     }
 }

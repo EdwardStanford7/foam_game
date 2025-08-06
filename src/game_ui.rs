@@ -76,11 +76,34 @@ pub enum PopupType {
     },
 }
 
+// Add method to load image data from file
+pub fn load_tile_image(tile: &Tile) -> Result<egui::ColorImage, String> {
+    let image = image::ImageReader::open(tile.file_name())
+        .map_err(|err| {
+            format!(
+                "Error loading texture file at {}: {}",
+                tile.file_name(),
+                err
+            )
+        })?
+        .decode()
+        .map_err(|err| format!("Error decoding image at {}: {}", tile.file_name(), err))?;
+
+    // Resize the image to 32x32
+    let image = image.resize(32, 32, image::imageops::FilterType::Nearest);
+    let size = [32, 32]; // Fixed size
+    let image_buffer = image.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        pixels.as_slice(),
+    ))
+}
+
 // Add method to get cached texture
 fn load_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
-    let image = tile
-        .load_image()
-        .map_err(|err| format!("Error loading texture: {err}"))?;
+    let image = load_tile_image(tile).map_err(|err| format!("Error loading texture: {err}"))?;
 
     let texture = ctx.load_texture(tile.file_name(), image, egui::TextureOptions::default());
 
@@ -181,6 +204,24 @@ pub enum DirectionKey {
     DownLeft,
     UpLeft,
     None,
+}
+
+impl DirectionKey {
+    // pub fn is_diagonal(&self) -> bool {
+    //     matches!(
+    //         self,
+    //         DirectionKey::UpRight | DirectionKey::DownRight | DirectionKey::DownLeft | DirectionKey::UpLeft
+    //     )
+    // }
+    pub fn is_cardinal(&self) -> bool {
+        matches!(
+            self,
+            DirectionKey::Up | DirectionKey::Right | DirectionKey::Down | DirectionKey::Left
+        )
+    }
+    pub fn is_none(&self) -> bool {
+        matches!(self, DirectionKey::None)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
