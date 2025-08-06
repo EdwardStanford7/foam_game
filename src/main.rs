@@ -4,6 +4,7 @@
 
 mod editing_model;
 mod game_ui;
+mod item;
 mod playing_model;
 mod tile;
 

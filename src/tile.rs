@@ -4,13 +4,6 @@
 
 use crate::game_ui::DirectionKey;
 
-#[derive(Debug, Clone)]
-pub enum Powerup {
-    None, // No powerup used
-    Wall, // Wall powerup allows you to move through/on walls
-          // more as needed
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub struct CardinalDirectionsAllowed {
     pub up: bool,
@@ -61,7 +54,7 @@ pub enum Tile {
     Bounce(isize), // Bounce some amount of squares, +/- some amount of acceleration or deceleration
     Portal(char, (usize, usize)), // Portal, teleport to other portal with same letter
     Ice,           // Ice
-    Door,          // Doors, requires
+    Door,          // Doors
     Wall,          // Blocks movement
     StartSpace,    // Start space, where the player starts
     EndSpace,      // End space, puzzle completion
