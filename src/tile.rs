@@ -2,9 +2,12 @@
 //! Game board tiles.
 //!
 
-use crate::game_ui::DirectionKey;
+use super::game_ui::DirectionKey;
+use super::item::KeyItem;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct CardinalDirectionsAllowed {
     pub up: bool,
     pub right: bool,
@@ -24,7 +27,7 @@ impl CardinalDirectionsAllowed {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct DiagonalDirectionsAllowed {
     pub up_right: bool,
     pub down_right: bool,
@@ -45,7 +48,7 @@ impl DiagonalDirectionsAllowed {
 }
 
 // Each tile occupies one space on the board, and has different rules for movement
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Tile {
     Empty,
     MoveCardinal(CardinalDirectionsAllowed),
@@ -165,5 +168,31 @@ impl Tile {
             Tile::Portal(..) => direction.is_cardinal() || direction.is_none(),
             _ => direction.is_cardinal(),
         }
+    }
+}
+
+/*
+    TileData struct - title with associated item
+*/
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct TileData {
+    pub tile: Tile,
+    // TBD: could be a vec of items later
+    pub key: KeyItem,
+}
+
+impl TileData {
+    pub fn empty() -> Self {
+        TileData {
+            tile: Tile::Empty,
+            key: KeyItem::None,
+        }
+    }
+}
+
+impl Default for TileData {
+    fn default() -> Self {
+        TileData::empty()
     }
 }

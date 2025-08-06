@@ -2,8 +2,11 @@
 //! Logic for displaying the game UI and handling user input
 //!
 
+const TILE_IMG_SIDE: u32 = 32;
+const KEY_IMG_SIDE: u32 = 8;
+
 use super::editing_model::EditingModel;
-use super::item::KeyItem;
+use super::item::{ALL_KEYS, KeyItem};
 use super::playing_model::{MovementPopupData, PlayingModel};
 use super::tile::{ALL_TILES, Tile};
 use eframe::egui;
@@ -91,8 +94,34 @@ pub fn load_tile_image(tile: &Tile) -> Result<egui::ColorImage, String> {
         .map_err(|err| format!("Error decoding image at {}: {}", tile.file_name(), err))?;
 
     // Resize the image to 32x32
-    let image = image.resize(32, 32, image::imageops::FilterType::Nearest);
-    let size = [32, 32]; // Fixed size
+    let image = image.resize(
+        TILE_IMG_SIDE,
+        TILE_IMG_SIDE,
+        image::imageops::FilterType::Nearest,
+    );
+    let size = [TILE_IMG_SIDE as usize, TILE_IMG_SIDE as usize]; // Fixed size
+    let image_buffer = image.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        pixels.as_slice(),
+    ))
+}
+
+pub fn load_key_image(key_item: &KeyItem) -> Result<egui::ColorImage, String> {
+    let image = image::ImageReader::open(key_item.file_name())
+        .map_err(|err| format!("Error loading key texture file: {err}"))?
+        .decode()
+        .map_err(|err| format!("Error decoding key image: {err}"))?;
+
+    // Resize the image to 8x8
+    let image = image.resize(
+        KEY_IMG_SIDE,
+        KEY_IMG_SIDE,
+        image::imageops::FilterType::Nearest,
+    );
+    let size = [KEY_IMG_SIDE as usize, KEY_IMG_SIDE as usize]; // Fixed size
     let image_buffer = image.to_rgba8();
     let pixels = image_buffer.as_flat_samples();
 
@@ -103,10 +132,22 @@ pub fn load_tile_image(tile: &Tile) -> Result<egui::ColorImage, String> {
 }
 
 // Add method to get cached texture
-fn load_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
+fn load_tile_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
     let image = load_tile_image(tile).map_err(|err| format!("Error loading texture: {err}"))?;
 
     let texture = ctx.load_texture(tile.file_name(), image, egui::TextureOptions::default());
+
+    Ok(texture)
+}
+
+fn load_key_texture(
+    ctx: &egui::Context,
+    key_item: &KeyItem,
+) -> Result<egui::TextureHandle, String> {
+    let image =
+        load_key_image(key_item).map_err(|err| format!("Error loading key texture: {err}"))?;
+
+    let texture = ctx.load_texture(key_item.file_name(), image, egui::TextureOptions::default());
 
     Ok(texture)
 }
@@ -117,8 +158,24 @@ impl App {
 
         // Pre-load all textures at startup
         for tile in ALL_TILES {
-            if let Ok(texture) = load_texture(&cc.egui_ctx, tile) {
+            if let Ok(texture) = load_tile_texture(&cc.egui_ctx, tile) {
                 texture_cache.insert(tile.file_name().to_string(), texture);
+            } else {
+                eprintln!(
+                    "Warning: failed to load texture for tile: {}",
+                    tile.file_name()
+                );
+            }
+        }
+
+        for key in ALL_KEYS {
+            if let Ok(texture) = load_key_texture(&cc.egui_ctx, key) {
+                texture_cache.insert(key.file_name().to_string(), texture);
+            } else {
+                eprintln!(
+                    "Warning: failed to load texture for key/item: {}",
+                    key.file_name()
+                );
             }
         }
 
@@ -389,8 +446,14 @@ fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
     Draw tile
 */
 
-fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::Response {
-    let (rect, response) =
+fn draw_tile_and_key(
+    tile: &Tile,
+    key: Option<&KeyItem>,
+    ui: &mut egui::Ui,
+    app: &App,
+    player: bool,
+) -> (egui::Response, Option<egui::Response>) {
+    let (rect, response_tile) =
         ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
     let painter = ui.painter_at(rect);
 
@@ -402,6 +465,8 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::R
             egui::Color32::WHITE,
         );
     }
+
+    let response_tile = response_tile.on_hover_text(tile.explanation());
 
     // Draw overlays
     match tile {
@@ -467,6 +532,39 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::R
         _ => {}
     }
 
+    // Draw key if present
+    let response_key = if let Some(key) = key {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::Vec2 { x: 8.0, y: 8.0 }, egui::Sense::click());
+        let painter = ui.painter_at(rect);
+        if key != &KeyItem::None {
+            if let Some(texture) = app.texture_cache.get(key.file_name()) {
+                painter.image(
+                    texture.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+
+        // Key overlay
+        if let Some(text) = key.overlay() {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::monospace(16.0),
+                egui::Color32::RED,
+            );
+        }
+
+        let response_key = response.on_hover_text(key.explanation());
+        Some(response_key)
+    } else {
+        None
+    };
+
     if player {
         // Draw player position indicator as a red circle in top right corner
         let circle_radius = 8.0;
@@ -474,7 +572,7 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::R
         painter.circle_filled(circle_center, circle_radius, egui::Color32::BLACK);
     }
 
-    response.on_hover_text(tile.explanation())
+    (response_tile, response_key)
 }
 
 /*
@@ -581,14 +679,15 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             }
             ui.label("Selected Tile:")
                 .on_hover_text(app.selected_type.explanation());
-            draw_tile(&app.selected_type, ui, app, false);
+            draw_tile_and_key(&app.selected_type, None, ui, app, false);
         });
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             for tile in ALL_TILES {
-                if draw_tile(tile, ui, app, false).clicked() {
+                let (tile_response, _) = draw_tile_and_key(tile, None, ui, app, false);
+                if tile_response.clicked() {
                     app.selected_type = tile.clone();
                 }
             }
@@ -607,20 +706,24 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
                 for (col_idx, tile) in row.iter().enumerate() {
                     // Draw each tile and handle clicks
-                    let response = draw_tile(tile, ui, app, false);
-                    if response.clicked() {
+                    let (response_tile, response_key) =
+                        draw_tile_and_key(&tile.tile, Some(&tile.key), ui, app, false);
+                    if response_tile.clicked() {
                         edited_pos = Some((row_idx, col_idx));
                     }
+                    if response_key.map_or(false, |r| r.clicked()) {
+                        // TODO: edit key
+                    }
                     // Highlight the selected tile
-                    if response.hovered() {
+                    if response_tile.hovered() {
                         ui.painter().rect_filled(
-                            response.rect,
+                            response_tile.rect,
                             0.0,
                             egui::Color32::from_black_alpha(100),
                         );
                         app.selected_tile_pos = Some((row_idx, col_idx));
                     }
-                    let rect = response.rect;
+                    let rect = response_tile.rect;
                     // Draw faint white border around each cell
                     ui.painter().rect_stroke(
                         rect,
@@ -665,7 +768,7 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
                     app.popup_data = Some(PopupData {
                         message: "You hit a wall! Do you want to use the red key?".to_string(),
                         popup_type: PopupType::YesNo {
-                            on_yes: |app| {
+                            on_yes: |_app| {
                                 // TODO: update
                                 // app.playing_model.step_animation(&KeyItem::OnEquip(
                                 //     KeyOnEquip::OnWall(KeyOnWall::Wall),
@@ -715,13 +818,15 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
             .show(ui, |ui| {
                 for (row_idx, row) in app.playing_model.get_board().iter().enumerate() {
                     for (col_idx, tile) in row.iter().enumerate() {
-                        let rect = draw_tile(
-                            tile,
+                        // TODO: do we need to do something with the key response?
+                        let (resp, _) = draw_tile_and_key(
+                            &tile.tile,
+                            Some(&tile.key),
                             ui,
                             app,
                             (row_idx, col_idx) == app.playing_model.get_player_pos(),
-                        )
-                        .rect;
+                        );
+                        let rect = resp.rect;
                         // Draw faint white border around each cell
                         ui.painter().rect_stroke(
                             rect,

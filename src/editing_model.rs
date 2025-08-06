@@ -1,11 +1,12 @@
-use super::tile::Tile;
-use serde::{Deserialize, Serialize};
-
 use super::game_ui::{self, PlayerMovementData};
+// use super::item::KeyItem;
+use super::tile::{Tile, TileData};
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EditingModel {
-    board: Vec<Vec<Tile>>,             // rows then columns
+    board: Vec<Vec<TileData>>,         // rows then columns
     board_size: (usize, usize),        // size of the board (width, height)
     start_pos: Option<(usize, usize)>, // position of unique start tile
     end_pos: Option<(usize, usize)>,   // position of unique end tile
@@ -13,7 +14,7 @@ pub struct EditingModel {
 
 impl EditingModel {
     pub fn new(board_size: (usize, usize)) -> Self {
-        let board = vec![vec![Tile::Empty; board_size.0]; board_size.1]; // Rows (x) then columns (y)
+        let board = vec![vec![TileData::empty(); board_size.0]; board_size.1]; // Rows (x) then columns (y)
         EditingModel {
             board,
             board_size,
@@ -47,6 +48,8 @@ impl EditingModel {
 
         for (row_idx, row) in self.board.iter().enumerate() {
             for (col_idx, tile) in row.iter().enumerate() {
+                let TileData { tile, key: _ } = &tile;
+
                 if !tile.is_valid() {
                     return false; // Invalid tile found
                 }
@@ -58,6 +61,9 @@ impl EditingModel {
                         .push((row_idx, col_idx));
                 }
             }
+
+            // TODO: verify that keys are valid
+            // The only important thing here is probably that the teleport/door keys have corresponding tiles
         }
 
         // Check that all portal letters appear exactly twice
@@ -69,8 +75,8 @@ impl EditingModel {
 
         // Verify that portals are properly linked to each other
         for (letter, positions) in portal_positions.iter() {
-            self.board[positions[0].0][positions[0].1] = Tile::Portal(*letter, positions[1]); // Link first portal to second
-            self.board[positions[1].0][positions[1].1] = Tile::Portal(*letter, positions[0]); // Link second portal to first
+            self.board[positions[0].0][positions[0].1].tile = Tile::Portal(*letter, positions[1]); // Link first portal to second
+            self.board[positions[1].0][positions[1].1].tile = Tile::Portal(*letter, positions[0]); // Link second portal to first
         }
 
         true
@@ -80,7 +86,7 @@ impl EditingModel {
         self.board_size
     }
 
-    pub fn get_board(&self) -> &Vec<Vec<Tile>> {
+    pub fn get_board(&self) -> &Vec<Vec<TileData>> {
         &self.board
     }
 
@@ -91,24 +97,24 @@ impl EditingModel {
     pub fn set_tile(&mut self, pos: (usize, usize), tile: Tile) {
         if matches!(tile, Tile::StartSpace) {
             if let Some(old) = self.start_pos.take() {
-                self.board[old.0][old.1] = Tile::Empty; // Remove old start tile
+                self.board[old.0][old.1].tile = Tile::Empty; // Remove old start tile
             }
             self.start_pos = Some(pos);
         } else if matches!(tile, Tile::EndSpace) {
             if let Some(old) = self.end_pos.take() {
-                self.board[old.0][old.1] = Tile::Empty; // Remove old end tile
+                self.board[old.0][old.1].tile = Tile::Empty; // Remove old end tile
             }
             self.end_pos = Some(pos);
         }
 
-        self.board[pos.0][pos.1] = tile;
+        self.board[pos.0][pos.1].tile = tile;
     }
 
     pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &PlayerMovementData) {
         let (key_up, key_right, key_down, key_left) =
             game_ui::direction_key_into_bools(&keypress.direction);
         if let Some(tile) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
-            match tile {
+            match &mut tile.tile {
                 Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
                     let mut new_directions = directions.clone();
                     for (key_pressed, direction) in [
@@ -121,13 +127,13 @@ impl EditingModel {
                             *direction = !*direction;
                         }
                     }
-                    let test_tile = match tile {
+                    let test_tile = match &tile.tile {
                         Tile::MoveCardinal(_) => Tile::MoveCardinal(new_directions.clone()),
                         Tile::Cloud(_) => Tile::Cloud(new_directions.clone()),
                         _ => unreachable!(),
                     };
                     if test_tile.is_valid() {
-                        *tile = test_tile;
+                        tile.tile = test_tile;
                     }
                 }
                 Tile::MoveDiagonal(dirs) => {
@@ -147,7 +153,7 @@ impl EditingModel {
                         *dir = !*dir;
                         let test_tile = Tile::MoveDiagonal(new_dirs.clone());
                         if test_tile.is_valid() {
-                            *tile = test_tile;
+                            tile.tile = test_tile;
                         }
                     }
                 }

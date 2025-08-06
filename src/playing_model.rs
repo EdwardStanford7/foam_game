@@ -3,12 +3,13 @@
 //!
 
 use super::item::KeyItem;
-use super::tile::Tile;
+use super::tile::{Tile, TileData};
 use crate::{editing_model, game_ui::DirectionKey, game_ui::PlayerMovementData};
 
 #[derive(Debug, Clone)]
 pub enum MovementPopupData {
     None, // No popup
+
     Lost, // Lost the game
     Won,  // Won the game
     Wall, // Hit a wall
@@ -27,7 +28,7 @@ pub struct PlayingAnimationState {
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayingModel {
-    board: Vec<Vec<Tile>>,
+    board: Vec<Vec<TileData>>,
     board_size: (usize, usize), // size of the board, including padding
     player_pos: (usize, usize), // position of the player
     pub animation_state: Option<PlayingAnimationState>,
@@ -41,7 +42,7 @@ impl PlayingModel {
         );
 
         // pad board with layer of empty tiles on outside
-        let mut board = vec![vec![Tile::Empty; board_size.0]; board_size.1];
+        let mut board = vec![vec![TileData::empty(); board_size.0]; board_size.1];
         for (i, row) in editing_model.get_board().iter().enumerate() {
             for (j, tile) in row.iter().enumerate() {
                 board[i + 1][j + 1] = tile.clone(); // offset by 1 to account for padding
@@ -61,7 +62,7 @@ impl PlayingModel {
         }
     }
 
-    pub fn get_board(&self) -> &Vec<Vec<Tile>> {
+    pub fn get_board(&self) -> &Vec<Vec<TileData>> {
         &self.board
     }
 
@@ -71,6 +72,7 @@ impl PlayingModel {
 
     pub fn start_movement_animation(&mut self, movement: PlayerMovementData) {
         if !self.board[self.player_pos.0][self.player_pos.1]
+            .tile
             .can_move_in_direction(&movement.direction)
         {
             self.animation_state = None;
@@ -78,7 +80,9 @@ impl PlayingModel {
         }
 
         self.animation_state = Some(PlayingAnimationState {
-            current_tile: self.board[self.player_pos.0][self.player_pos.1].clone(),
+            current_tile: self.board[self.player_pos.0][self.player_pos.1]
+                .clone()
+                .tile,
             old_pos: self.player_pos,
             movement_speed: movement.move_speed,
             direction: movement.direction,
@@ -88,7 +92,7 @@ impl PlayingModel {
         });
     }
 
-    pub fn step_animation(&mut self, keys: &KeyItem) -> MovementPopupData {
+    pub fn step_animation(&mut self, _keys: &KeyItem) -> MovementPopupData {
         if let Some(state) = &mut self.animation_state {
             if state.finished {
                 self.animation_state = None;
@@ -97,7 +101,9 @@ impl PlayingModel {
 
             // If no key is being used just move normally
             if !state.waiting_on_item {
-                state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
+                state.current_tile = self.board[self.player_pos.0][self.player_pos.1]
+                    .tile
+                    .clone();
                 state.old_pos = self.player_pos;
 
                 match state.direction {
@@ -156,33 +162,34 @@ impl PlayingModel {
 
             for row in start_row..=end_row {
                 for col in start_col..=end_col {
-                    if self.board[row][col] == Tile::Wall {
-                        if state.waiting_on_item {
-                            // If the user is waiting for a KeyItem and the KeyItem is used, allow movement
-                            // TODO: update
-                            if matches!(keys, KeyItem::OnEquip(_)) {
-                                state.waiting_on_item = false;
-                                continue; // Continue to allow movement
-                            } else {
-                                // If the user is not using the wall KeyItem, revert to the old position
-                                state.waiting_on_item = false;
+                    if self.board[row][col].tile == Tile::Wall {
+                        // TODO: update
+                        //     if state.waiting_on_item {
+                        //         // If the user is waiting for a KeyItem and the KeyItem is used, allow movement
+                        //         // TODO: update
+                        //         if matches!(keys, KeyItem::OnEquip(_)) {
+                        //             state.waiting_on_item = false;
+                        //             continue; // Continue to allow movement
+                        //         } else {
+                        //             // If the user is not using the wall KeyItem, revert to the old position
+                        //             state.waiting_on_item = false;
 
-                                // If there is a wall, revert to the position right in front of the wall
-                                self.player_pos = if state.old_pos.0 < self.player_pos.0 {
-                                    (row.saturating_sub(1), col) // Move up
-                                } else if state.old_pos.0 > self.player_pos.0 {
-                                    (row + 1, col) // Move down
-                                } else if state.old_pos.1 < self.player_pos.1 {
-                                    (row, col.saturating_sub(1)) // Move left
-                                } else {
-                                    (row, col + 1) // Move right
-                                };
-                            }
-                        } else {
-                            // Need to prompt the user to use the wall KeyItem
-                            state.waiting_on_item = true;
-                            return MovementPopupData::Wall;
-                        }
+                        //             // If there is a wall, revert to the position right in front of the wall
+                        //             self.player_pos = if state.old_pos.0 < self.player_pos.0 {
+                        //                 (row.saturating_sub(1), col) // Move up
+                        //             } else if state.old_pos.0 > self.player_pos.0 {
+                        //                 (row + 1, col) // Move down
+                        //             } else if state.old_pos.1 < self.player_pos.1 {
+                        //                 (row, col.saturating_sub(1)) // Move left
+                        //             } else {
+                        //                 (row, col + 1) // Move right
+                        //             };
+                        //         }
+                        //     } else {
+                        //         // Need to prompt the user to use the wall KeyItem
+                        // TODO: update
+                        state.waiting_on_item = true;
+                        return MovementPopupData::Wall;
                     }
                 }
             }
@@ -195,11 +202,13 @@ impl PlayingModel {
 
             // If the current tile is a cloud, remove it
             if matches!(state.current_tile, Tile::Cloud(_)) {
-                self.board[state.old_pos.0][state.old_pos.1] = Tile::Empty;
+                self.board[state.old_pos.0][state.old_pos.1].tile = Tile::Empty;
             }
 
             // Apply movement
-            state.current_tile = self.board[self.player_pos.0][self.player_pos.1].clone();
+            state.current_tile = self.board[self.player_pos.0][self.player_pos.1]
+                .tile
+                .clone();
             state.old_pos = self.player_pos;
 
             match state.current_tile {

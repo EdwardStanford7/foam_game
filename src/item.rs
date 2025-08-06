@@ -2,34 +2,36 @@
 //! Game model for keys (single-use items).
 //!
 
+use serde::{Deserialize, Serialize};
+
 /// Keys that activate on receiving them
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnGet {
     FinishKey, // Must get before going to finish
 }
 
 /// Keys that activate on use
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnUse {
     TeleportKey(char), // Teleport to a portal
 }
 
 /// Keys that activate on movement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnMovement {
     Cardinal, // Move in a (disallowed) cardinal direction
     Diagonal, // Move in a diagonal direction
 }
 
 /// Keys that activate on hitting a wall
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnWall {
     DoorKey(char), // Open a door
     Wall,          // Jump over a wall
 }
 
 /// Keys that activate mid-bounce
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnBounce {
     BounceLess,   // Bounce -1 less
     BounceMore,   // Bounce +1 more
@@ -37,13 +39,13 @@ pub enum KeyOnBounce {
 }
 
 /// Keys that activate on landing on an empty tile
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnEmpty {
     CloudKey, // Jump on air
 }
 
 /// Keys that are equiped
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyOnEquip {
     OnMovement(KeyOnMovement),
     OnWall(KeyOnWall),
@@ -51,7 +53,7 @@ pub enum KeyOnEquip {
     OnEmpty(KeyOnEmpty),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyItem {
     None, // No key item
     OnGet(KeyOnGet),
@@ -117,3 +119,17 @@ impl KeyItem {
         }
     }
 }
+
+pub const ALL_KEYS: &[KeyItem] = &[
+    KeyItem::None,
+    KeyItem::OnGet(FinishKey),
+    KeyItem::OnUse(TeleportKey('A')),
+    KeyItem::OnEquip(OnMovement(Cardinal)),
+    KeyItem::OnEquip(OnMovement(Diagonal)),
+    KeyItem::OnEquip(OnWall(DoorKey('A'))),
+    KeyItem::OnEquip(OnWall(Wall)),
+    KeyItem::OnEquip(OnBounce(BounceLess)),
+    KeyItem::OnEquip(OnBounce(BounceMore)),
+    KeyItem::OnEquip(OnBounce(BounceChange)),
+    KeyItem::OnEquip(OnEmpty(CloudKey)),
+];
