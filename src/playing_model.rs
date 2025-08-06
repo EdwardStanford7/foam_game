@@ -193,7 +193,7 @@ impl PlayingModel {
 
             // If the current tile is a cloud, remove it
             if matches!(state.current_tile, Tile::Cloud(_)) {
-                self.board[self.player_pos.0][self.player_pos.1] = Tile::Empty;
+                self.board[state.old_pos.0][state.old_pos.1] = Tile::Empty;
             }
 
             // Apply movement
