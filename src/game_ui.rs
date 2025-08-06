@@ -3,9 +3,9 @@
 //!
 
 use super::editing_model::EditingModel;
+use super::item::KeyItem;
 use super::playing_model::{MovementPopupData, PlayingModel};
 use super::tile::{ALL_TILES, Tile};
-use super::item::KeyItem;
 use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
@@ -666,7 +666,10 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
                         message: "You hit a wall! Do you want to use the red key?".to_string(),
                         popup_type: PopupType::YesNo {
                             on_yes: |app| {
-                                app.playing_model.step_animation(&KeyItem::Wall);
+                                // TODO: update
+                                // app.playing_model.step_animation(&KeyItem::OnEquip(
+                                //     KeyOnEquip::OnWall(KeyOnWall::Wall),
+                                // ));
                             },
                             on_no: Some(|app| {
                                 app.playing_model.step_animation(&KeyItem::None);

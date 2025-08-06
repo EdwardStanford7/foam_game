@@ -2,8 +2,8 @@
 //! Logic for editing and playing the game
 //!
 
-use super::tile::Tile;
 use super::item::KeyItem;
+use super::tile::Tile;
 use crate::{editing_model, game_ui::DirectionKey, game_ui::PlayerMovementData};
 
 #[derive(Debug, Clone)]
@@ -159,7 +159,8 @@ impl PlayingModel {
                     if self.board[row][col] == Tile::Wall {
                         if state.waiting_on_item {
                             // If the user is waiting for a KeyItem and the KeyItem is used, allow movement
-                            if matches!(keys, KeyItem::Wall) {
+                            // TODO: update
+                            if matches!(keys, KeyItem::OnEquip(_)) {
                                 state.waiting_on_item = false;
                                 continue; // Continue to allow movement
                             } else {
