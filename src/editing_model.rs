@@ -24,17 +24,17 @@ impl EditingModel {
 
     pub fn load_board(file: &str) -> Result<Self, String> {
         let model_raw = std::fs::read_to_string(file)
-            .map_err(|err| format!("Error reading board file: {}", err))?;
+            .map_err(|err| format!("Error reading board file: {err}"))?;
         let model: EditingModel = serde_json::from_str(&model_raw)
-            .map_err(|err| format!("Error deserializing board data: {}", err))?;
+            .map_err(|err| format!("Error deserializing board data: {err}"))?;
         Ok(model)
     }
 
     pub fn save_board(&self, file: &str) -> Result<(), String> {
         let model_data = serde_json::to_string(&self)
-            .map_err(|err| format!("Error serializing board data: {}", err))?;
+            .map_err(|err| format!("Error serializing board data: {err}"))?;
         std::fs::write(file, model_data)
-            .map_err(|err| format!("Error writing board file: {}", err))?;
+            .map_err(|err| format!("Error writing board file: {err}"))?;
         Ok(())
     }
 

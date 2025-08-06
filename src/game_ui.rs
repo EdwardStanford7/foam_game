@@ -80,7 +80,7 @@ pub enum PopupType {
 fn load_texture(ctx: &egui::Context, tile: &Tile) -> Result<egui::TextureHandle, String> {
     let image = tile
         .load_image()
-        .map_err(|err| format!("Error loading texture: {}", err))?;
+        .map_err(|err| format!("Error loading texture: {err}"))?;
 
     let texture = ctx.load_texture(tile.file_name(), image, egui::TextureOptions::default());
 
@@ -401,7 +401,7 @@ fn draw_tile(tile: &Tile, ui: &mut egui::Ui, app: &App, player: bool) -> egui::R
         }
         Tile::Bounce(val) => {
             let text = if *val > 0 {
-                format!("+{}", val)
+                format!("+{val}")
             } else {
                 val.to_string()
             };
