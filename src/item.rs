@@ -72,8 +72,8 @@ use KeyOnWall::*;
 impl KeyItem {
     pub fn file_name(&self) -> &str {
         match self {
-            KeyItem::None => "assets/kes/none.png",
-            KeyItem::OnGet(FinishKey) => "assetskeys/finish.png",
+            KeyItem::None => "assets/keys/none.png",
+            KeyItem::OnGet(FinishKey) => "assets/keys/finish.png",
             KeyItem::OnUse(TeleportKey(_c)) => "assets/keys/teleport.png",
             KeyItem::OnEquip(OnMovement(Cardinal)) => "assets/keys/cardinal.png",
             KeyItem::OnEquip(OnMovement(Diagonal)) => "assets/keys/diagonal.png",
