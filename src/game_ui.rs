@@ -3,11 +3,12 @@
 //!
 
 use super::editing_model::EditingModel;
-use super::item::{ALL_KEYS, KeyItem};
+use super::item::{ALL_KEYS, KeyItem, KeyOnUse};
 use super::playing_model::{MovementPopupData, PlayingModel};
-use super::tile::{ALL_TILES, Tile, TileData};
+use super::tile::{ALL_TILES, Tile};
 use eframe::egui;
 use native_dialog::FileDialog;
+
 use std::collections::HashMap;
 
 const TILE_IMG_SIDE: u32 = 32;
@@ -450,12 +451,12 @@ fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
 
 fn draw_tile_and_key(
     tile: &Tile,
-    key: Option<KeyItem>,
+    key: &KeyItem,
     ui: &mut egui::Ui,
     app: &App,
     player: bool,
-) -> (egui::Response, Option<egui::Response>) {
-    let (rect, response_tile) =
+) -> egui::Response {
+    let (rect, mut response) =
         ui.allocate_exact_size(egui::Vec2 { x: 32.0, y: 32.0 }, egui::Sense::click());
     let painter = ui.painter_at(rect);
 
@@ -468,10 +469,8 @@ fn draw_tile_and_key(
         );
     }
 
-    let response_tile = response_tile.on_hover_text(tile.explanation());
-
     // Draw overlays
-    match tile {
+    match &tile {
         Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
             let center = rect.center();
             let offset = 10.0;
@@ -534,38 +533,50 @@ fn draw_tile_and_key(
         _ => {}
     }
 
-    // Draw key if present
-    let response_key = if let Some(key) = key {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2 { x: 8.0, y: 8.0 }, egui::Sense::click());
-        let painter = ui.painter_at(rect);
-        if key != KeyItem::None {
-            if let Some(texture) = app.texture_cache.get(key.file_name()) {
-                painter.image(
-                    texture.id(),
-                    rect,
-                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            }
+    if *key != KeyItem::None {
+        // Calculate 8x8 rect in lower right corner
+        let key_size = 12.0;
+        let key_rect = egui::Rect::from_min_size(
+            egui::Pos2::new(rect.max.x - key_size, rect.max.y - key_size),
+            egui::Vec2::splat(key_size),
+        );
+
+        if let Some(texture) = app.texture_cache.get(key.file_name()) {
+            painter.image(
+                texture.id(),
+                key_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
         }
 
         // Key overlay
         if let Some(text) = key.overlay() {
             painter.text(
-                rect.center(),
+                key_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 text,
                 egui::FontId::monospace(16.0),
                 egui::Color32::RED,
             );
         }
+    }
 
-        let response_key = response.on_hover_text(key.explanation());
-        Some(response_key)
+    if *tile == Tile::Empty {
+        if *key == KeyItem::None {
+            ui.painter().rect_stroke(
+                response.rect,
+                0.0,
+                egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
+                egui::StrokeKind::Outside,
+            );
+            response = response.on_hover_text(tile.explanation());
+        } else {
+            response = response.on_hover_text(key.explanation());
+        }
     } else {
-        None
-    };
+        response = response.on_hover_text(tile.explanation());
+    }
 
     if player {
         // Draw player position indicator as a red circle in top right corner
@@ -574,7 +585,7 @@ fn draw_tile_and_key(
         painter.circle_filled(circle_center, circle_radius, egui::Color32::BLACK);
     }
 
-    (response_tile, response_key)
+    response
 }
 
 /*
@@ -599,7 +610,7 @@ fn startup_screen(ui: &mut egui::Ui, app: &mut App) {
 
     if ui.button("Start Editing").clicked() {
         // Initialize the board with the selected size
-        app.editing_model = EditingModel::new((app.width_slider, app.height_slider));
+        app.editing_model = EditingModel::new((app.height_slider, app.width_slider));
         app.mode = AppMode::Editing;
     }
 
@@ -649,7 +660,26 @@ fn editing_screen(ui: &mut egui::Ui, app: &mut App) {
     display_editing_board(ui, app);
 
     if let Some(keypress) = app.get_movement_data() {
-        if let Some(selected_tile_pos) = app.selected_tile_pos {
+        if let Some(KeyItem::OnUse(key_on_use)) = &mut app.selected_key {
+            let (key_up, _, key_down, _) = direction_key_into_bools(&keypress.direction);
+            match key_on_use {
+                KeyOnUse::TeleportKey(c) => {
+                    if key_up {
+                        *c = match *c {
+                            'A'..='Y' => (*c as u8 + 1) as char,
+                            'Z' => 'A',
+                            _ => 'A',
+                        };
+                    } else if key_down {
+                        *c = match *c {
+                            'B'..='Z' => (*c as u8 - 1) as char,
+                            'A' => 'Z',
+                            _ => 'Z',
+                        };
+                    }
+                }
+            }
+        } else if let Some(selected_tile_pos) = app.selected_tile_pos {
             app.editing_model.edit_tile(selected_tile_pos, &keypress);
         }
     }
@@ -685,64 +715,59 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             ui.label("Selected Tile:");
             draw_tile_and_key(
                 app.selected_type.as_ref().unwrap_or(&Tile::Empty),
-                None,
+                &KeyItem::None,
                 ui,
                 app,
                 false,
             );
 
             ui.label("Selected Key:");
-            draw_tile_and_key(&Tile::Empty, app.selected_key.clone(), ui, app, false);
+            if app.selected_key.is_none() {
+                ui.label("None");
+            } else {
+                draw_tile_and_key(
+                    &Tile::Empty,
+                    app.selected_key.as_ref().unwrap(),
+                    ui,
+                    app,
+                    false,
+                );
+            }
         });
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             // Tiles
+            ui.label("Tiles");
             for tile in ALL_TILES {
-                let (tile_response, _) = draw_tile_and_key(tile, None, ui, app, false);
-                if tile_response.clicked() {
+                let response = draw_tile_and_key(&tile.clone(), &KeyItem::None, ui, app, false);
+                if response.clicked() {
                     app.selected_type = Some(tile.clone());
                     app.selected_key = None; // Clear selected key when selecting a tile
                 }
-                if tile_response.hovered() {
+                if response.hovered() {
                     ui.painter().rect_filled(
-                        tile_response.rect,
+                        response.rect,
                         0.0,
                         egui::Color32::from_black_alpha(100),
                     );
                 }
-                // white border around each tile
-                ui.painter().rect_stroke(
-                    tile_response.rect,
-                    0.0,
-                    egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                    egui::StrokeKind::Outside,
-                );
             }
 
             // Keys
+            ui.label("Keys");
             for key in ALL_KEYS {
-                let (_, key_response) =
-                    draw_tile_and_key(&Tile::Empty, Some(key).cloned(), ui, app, false);
-                if let Some(key_response) = key_response {
-                    if key_response.clicked() {
-                        app.selected_key = Some(key.clone());
-                        app.selected_type = None; // Clear selected tile when selecting a key
-                    }
-                    if key_response.hovered() {
-                        ui.painter().rect_filled(
-                            key_response.rect,
-                            0.0,
-                            egui::Color32::from_black_alpha(100),
-                        );
-                    }
-                    // white border around each key
-                    ui.painter().rect_stroke(
-                        key_response.rect,
+                let response = draw_tile_and_key(&Tile::Empty, &key.clone(), ui, app, false);
+                if response.clicked() {
+                    app.selected_key = Some(key.clone());
+                    app.selected_type = None; // Clear selected tile when selecting a key
+                }
+                if response.hovered() {
+                    ui.painter().rect_filled(
+                        response.rect,
                         0.0,
-                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                        egui::StrokeKind::Outside,
+                        egui::Color32::from_black_alpha(100),
                     );
                 }
             }
@@ -761,28 +786,20 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
                 for (col_idx, tile) in row.iter().enumerate() {
                     // Draw each tile and handle clicks
-                    let (response_tile, _) =
-                        draw_tile_and_key(&tile.tile, Some(tile.key.clone()), ui, app, false);
-                    if response_tile.clicked() {
+                    let response =
+                        draw_tile_and_key(&tile.tile.clone(), &tile.key.clone(), ui, app, false);
+                    if response.clicked() {
                         edited_pos = Some((row_idx, col_idx));
                     }
                     // Highlight the selected tile
-                    if response_tile.hovered() {
+                    if response.hovered() {
                         ui.painter().rect_filled(
-                            response_tile.rect,
+                            response.rect,
                             0.0,
                             egui::Color32::from_black_alpha(100),
                         );
                         app.selected_tile_pos = Some((row_idx, col_idx));
                     }
-                    let rect = response_tile.rect;
-                    // Draw faint white border around each cell
-                    ui.painter().rect_stroke(
-                        rect,
-                        0.0,
-                        egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                        egui::StrokeKind::Outside,
-                    );
                 }
                 ui.end_row();
             }
@@ -822,7 +839,6 @@ fn play_screen(ui: &mut egui::Ui, app: &mut App) {
             match app.playing_model.step_animation(&KeyItem::None) {
                 MovementPopupData::None => {}
                 MovementPopupData::Wall => {
-                    println!("Waiting for wall key");
                     app.popup_data = Some(PopupData {
                         message: "You hit a wall! Do you want to use the red key?".to_string(),
                         popup_type: PopupType::YesNo {
@@ -876,21 +892,12 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
             .show(ui, |ui| {
                 for (row_idx, row) in app.playing_model.get_board().iter().enumerate() {
                     for (col_idx, tile) in row.iter().enumerate() {
-                        // TODO: do we need to do something with the key response?
-                        let (resp, _) = draw_tile_and_key(
+                        draw_tile_and_key(
                             &tile.tile,
-                            Some(tile.key.clone()),
+                            &tile.key,
                             ui,
                             app,
                             (row_idx, col_idx) == app.playing_model.get_player_pos(),
-                        );
-                        let rect = resp.rect;
-                        // Draw faint white border around each cell
-                        ui.painter().rect_stroke(
-                            rect,
-                            0.0,
-                            egui::Stroke::new(0.5, egui::Color32::from_white_alpha(64)),
-                            egui::StrokeKind::Outside,
                         );
                     }
                     ui.end_row();

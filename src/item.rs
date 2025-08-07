@@ -121,7 +121,6 @@ impl KeyItem {
 }
 
 pub const ALL_KEYS: &[KeyItem] = &[
-    KeyItem::None,
     KeyItem::OnGet(FinishKey),
     KeyItem::OnUse(TeleportKey('A')),
     KeyItem::OnEquip(OnMovement(Cardinal)),

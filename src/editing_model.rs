@@ -13,7 +13,7 @@ pub struct EditingModel {
 
 impl EditingModel {
     pub fn new(board_size: (usize, usize)) -> Self {
-        let board = vec![vec![TileData::empty(); board_size.0]; board_size.1]; // Rows (x) then columns (y)
+        let board = vec![vec![TileData::empty(); board_size.1]; board_size.0]; // Rows (x) then columns (y)
         EditingModel {
             board,
             board_size,
@@ -110,7 +110,9 @@ impl EditingModel {
     }
 
     pub fn set_key(&mut self, pos: (usize, usize), key: KeyItem) {
-        if let Some(tile_data) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
+        if let Some(tile_data) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1))
+            && tile_data.tile != Tile::Empty
+        {
             tile_data.key = key;
         }
     }
@@ -118,8 +120,8 @@ impl EditingModel {
     pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &PlayerMovementData) {
         let (key_up, key_right, key_down, key_left) =
             game_ui::direction_key_into_bools(&keypress.direction);
-        if let Some(tile) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
-            match &mut tile.tile {
+        if let Some(tile_data) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
+            match &mut tile_data.tile {
                 Tile::MoveCardinal(directions) | Tile::Cloud(directions) => {
                     let mut new_directions = directions.clone();
                     for (key_pressed, direction) in [
@@ -132,13 +134,13 @@ impl EditingModel {
                             *direction = !*direction;
                         }
                     }
-                    let test_tile = match &tile.tile {
+                    let test_tile = match &tile_data.tile {
                         Tile::MoveCardinal(_) => Tile::MoveCardinal(new_directions.clone()),
                         Tile::Cloud(_) => Tile::Cloud(new_directions.clone()),
                         _ => unreachable!(),
                     };
                     if test_tile.is_valid() {
-                        tile.tile = test_tile;
+                        tile_data.tile = test_tile;
                     }
                 }
                 Tile::MoveDiagonal(dirs) => {
@@ -158,7 +160,7 @@ impl EditingModel {
                         *dir = !*dir;
                         let test_tile = Tile::MoveDiagonal(new_dirs.clone());
                         if test_tile.is_valid() {
-                            tile.tile = test_tile;
+                            tile_data.tile = test_tile;
                         }
                     }
                 }

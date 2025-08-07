@@ -42,7 +42,7 @@ impl PlayingModel {
         );
 
         // pad board with layer of empty tiles on outside
-        let mut board = vec![vec![TileData::empty(); board_size.0]; board_size.1];
+        let mut board = vec![vec![TileData::empty(); board_size.1]; board_size.0];
         for (i, row) in editing_model.get_board().iter().enumerate() {
             for (j, tile) in row.iter().enumerate() {
                 board[i + 1][j + 1] = tile.clone(); // offset by 1 to account for padding
