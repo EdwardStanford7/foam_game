@@ -1,7 +1,6 @@
 use super::game_ui::{self, PlayerMovementData};
-// use super::item::KeyItem;
+use super::item::KeyItem;
 use super::tile::{Tile, TileData};
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -108,6 +107,12 @@ impl EditingModel {
         }
 
         self.board[pos.0][pos.1].tile = tile;
+    }
+
+    pub fn set_key(&mut self, pos: (usize, usize), key: KeyItem) {
+        if let Some(tile_data) = self.board.get_mut(pos.0).and_then(|row| row.get_mut(pos.1)) {
+            tile_data.key = key;
+        }
     }
 
     pub fn edit_tile(&mut self, pos: (usize, usize), keypress: &PlayerMovementData) {

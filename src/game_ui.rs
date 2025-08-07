@@ -2,16 +2,16 @@
 //! Logic for displaying the game UI and handling user input
 //!
 
-const TILE_IMG_SIDE: u32 = 32;
-const KEY_IMG_SIDE: u32 = 8;
-
 use super::editing_model::EditingModel;
 use super::item::{ALL_KEYS, KeyItem};
 use super::playing_model::{MovementPopupData, PlayingModel};
-use super::tile::{ALL_TILES, Tile};
+use super::tile::{ALL_TILES, Tile, TileData};
 use eframe::egui;
 use native_dialog::FileDialog;
 use std::collections::HashMap;
+
+const TILE_IMG_SIDE: u32 = 32;
+const KEY_IMG_SIDE: u32 = 8;
 
 #[derive(Debug, Clone)]
 pub struct KeyState {
@@ -52,11 +52,11 @@ pub struct App {
     playing_model: PlayingModel, // Struct that contains game data and logic for playing mode
 
     mode: AppMode,
-    selected_type: Tile,
-    selected_key: KeyItem, // Currently selected key/item for editing
+    selected_type: Option<Tile>,
+    selected_key: Option<KeyItem>, // Currently selected key/item for editing
     selected_tile_pos: Option<(usize, usize)>, // Currently selected tile position for editing
-    width_slider: usize,   // Width slider for board size
-    height_slider: usize,  // Height slider for board size
+    width_slider: usize,           // Width slider for board size
+    height_slider: usize,          // Height slider for board size
 
     key_state: KeyState,
     last_animation_update: f64,
@@ -184,8 +184,8 @@ impl App {
             editing_model: Default::default(),
             playing_model: Default::default(),
             mode: AppMode::Startup,
-            selected_type: Tile::Empty,
-            selected_key: KeyItem::None,
+            selected_type: None,
+            selected_key: None,
             selected_tile_pos: None,
             width_slider: 0,
             height_slider: 0,
@@ -450,7 +450,7 @@ fn update_key_state(ui: &mut egui::Ui, app: &mut App) {
 
 fn draw_tile_and_key(
     tile: &Tile,
-    key: Option<&KeyItem>,
+    key: Option<KeyItem>,
     ui: &mut egui::Ui,
     app: &App,
     player: bool,
@@ -539,7 +539,7 @@ fn draw_tile_and_key(
         let (rect, response) =
             ui.allocate_exact_size(egui::Vec2 { x: 8.0, y: 8.0 }, egui::Sense::click());
         let painter = ui.painter_at(rect);
-        if key != &KeyItem::None {
+        if key != KeyItem::None {
             if let Some(texture) = app.texture_cache.get(key.file_name()) {
                 painter.image(
                     texture.id(),
@@ -683,10 +683,16 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             }
 
             ui.label("Selected Tile:");
-            draw_tile_and_key(&app.selected_type, None, ui, app, false);
+            draw_tile_and_key(
+                app.selected_type.as_ref().unwrap_or(&Tile::Empty),
+                None,
+                ui,
+                app,
+                false,
+            );
 
             ui.label("Selected Key:");
-            draw_tile_and_key(&Tile::Empty, Some(&app.selected_key), ui, app, false);
+            draw_tile_and_key(&Tile::Empty, app.selected_key.clone(), ui, app, false);
         });
 
         ui.add_space(5.0);
@@ -696,7 +702,8 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
             for tile in ALL_TILES {
                 let (tile_response, _) = draw_tile_and_key(tile, None, ui, app, false);
                 if tile_response.clicked() {
-                    app.selected_type = tile.clone();
+                    app.selected_type = Some(tile.clone());
+                    app.selected_key = None; // Clear selected key when selecting a tile
                 }
                 if tile_response.hovered() {
                     ui.painter().rect_filled(
@@ -716,10 +723,12 @@ fn display_editing_menu(ui: &mut egui::Ui, app: &mut App) {
 
             // Keys
             for key in ALL_KEYS {
-                let (_, key_response) = draw_tile_and_key(&Tile::Empty, Some(key), ui, app, false);
+                let (_, key_response) =
+                    draw_tile_and_key(&Tile::Empty, Some(key).cloned(), ui, app, false);
                 if let Some(key_response) = key_response {
                     if key_response.clicked() {
-                        app.selected_key = key.clone();
+                        app.selected_key = Some(key.clone());
+                        app.selected_type = None; // Clear selected tile when selecting a key
                     }
                     if key_response.hovered() {
                         ui.painter().rect_filled(
@@ -746,19 +755,16 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
 
     // Display the board
     egui::Grid::new("editing_board_grid")
-        .spacing(egui::vec2(0.0, 0.0))
+        .spacing(egui::vec2(1.0, 1.0))
         .min_col_width(0.0)
         .show(ui, |ui| {
             for (row_idx, row) in app.editing_model.get_board().iter().enumerate() {
                 for (col_idx, tile) in row.iter().enumerate() {
                     // Draw each tile and handle clicks
-                    let (response_tile, response_key) =
-                        draw_tile_and_key(&tile.tile, Some(&tile.key), ui, app, false);
+                    let (response_tile, _) =
+                        draw_tile_and_key(&tile.tile, Some(tile.key.clone()), ui, app, false);
                     if response_tile.clicked() {
                         edited_pos = Some((row_idx, col_idx));
-                    }
-                    if response_key.map_or(false, |r| r.clicked()) {
-                        // TODO: edit key
                     }
                     // Highlight the selected tile
                     if response_tile.hovered() {
@@ -783,8 +789,14 @@ fn display_editing_board(ui: &mut egui::Ui, app: &mut App) {
         });
 
     if let Some(edited_pos) = edited_pos {
-        app.editing_model
-            .set_tile(edited_pos, app.selected_type.clone());
+        if let Some(selected_type) = &app.selected_type {
+            // If a tile is selected, set it at the edited position
+            app.editing_model
+                .set_tile(edited_pos, selected_type.clone());
+        } else if let Some(selected_key) = &app.selected_key {
+            // If a key is selected, set it at the edited position
+            app.editing_model.set_key(edited_pos, selected_key.clone());
+        }
     }
 }
 
@@ -859,7 +871,7 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
         );
 
         egui::Grid::new(grid_id)
-            .spacing(egui::vec2(2.0, 2.0))
+            .spacing(egui::vec2(1.0, 1.0))
             .min_col_width(0.0)
             .show(ui, |ui| {
                 for (row_idx, row) in app.playing_model.get_board().iter().enumerate() {
@@ -867,7 +879,7 @@ fn display_playing_board(ui: &mut egui::Ui, app: &mut App) {
                         // TODO: do we need to do something with the key response?
                         let (resp, _) = draw_tile_and_key(
                             &tile.tile,
-                            Some(&tile.key),
+                            Some(tile.key.clone()),
                             ui,
                             app,
                             (row_idx, col_idx) == app.playing_model.get_player_pos(),
